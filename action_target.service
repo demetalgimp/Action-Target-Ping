@@ -1,0 +1,13 @@
+[Unit]
+    Description=Action Target Skills Assessment
+    After=network.target nss-lookup.target
+
+[Service]
+    ExecStart=/usr/local/bin/actiontarget_ping --port=http --IPv4 --interval=100 hp.com lwn.net microsoft.com
+    Type=oneshot
+    Restart=on-failure
+    User=systemd.user
+    WorkingDirectory=/home/systemd.user/action-target
+
+[Install]
+    WantedBy=multi-user.target
