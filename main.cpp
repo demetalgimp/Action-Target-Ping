@@ -486,7 +486,7 @@ void* ReportDispatchServer(void*) {
  */
 void *PingService(void *arg) {
 	AddressInfo host = *reinterpret_cast<AddressInfo*>(arg);
-	int sd = socket(host.family, host.socktype, 0);//, SOCK_NONBLOCK);
+	int sd = socket(host.family, host.socktype, 0);
 	if ( sd > 0 ) {
 		if ( mVerboseLevel > eNoVerbosity ) {
 			std::cerr << host;
@@ -646,7 +646,7 @@ int main(int cnt, char *args[]) {
 			for ( AddressInfo host : host_addrs ) {
 				PingService(&host);
 			}
-			usleep(mInterval);
+			usleep(mInterval * 1000);
 		} while ( mInterval > 0 );
 
 		std::cerr.flush();
