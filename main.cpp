@@ -97,18 +97,27 @@ class String {
 
 	public:
 		String& operator=(const String& string) {
-			if ( !IsEmpty() ) {
+			if ( text != EMPTY ) {
 				delete [] text;
-				text = EMPTY; // <-- reset for double-free errors
-				length = 0;
+			}
+			length = 0;
+			if ( string.IsEmpty() ) {
+				// delete [] text;
+				// length = 0;
+				text = EMPTY;
+
+			} else if ( !IsEmpty() ) {
+				// delete [] text;
+				// text = EMPTY; // <-- reset for double-free errors
+				// length = 0;
 				if ( !string.IsEmpty() ) {
 					text = strdup(string.text);
 				}
 				length = string.length;
 
-			} else if ( !string.IsEmpty() ) {
-				text = strdup(string.text);
-				length = string.length;
+			// } else if ( !string.IsEmpty() ) {
+				// text = strdup(string.text);
+				// length = string.length;
 			}
 			return *this;
 		}
@@ -117,6 +126,18 @@ class String {
 		}
 		bool operator==(const String& string) {
 			return (strcmp(text, string.text) == 0);
+		}
+		String operator+=(const String& string) {
+			if ( !string.IsEmpty() ) {
+				length += string.length;
+				char *tmps = new char[length + 1];
+				snprintf(tmps, length + 1, "%s%s", text, string.text);
+				if ( text != EMPTY ) {
+					delete [] text;
+				}
+				text = tmps;
+			}
+			return *this;
 		}
 
 	public:
@@ -144,85 +165,138 @@ class String {
 								auto _a = a; \
 								auto _b = b; \
 								if ( _a == _b ) { \
-									std::cout << "passed.\n"; \
+									std::cout << "\x1B[32mPASSED.\x1B[0m\n"; \
 								} else { \
-									std::cout << "failed. Expected " << _a << " but got \"" << _b << "\"" << std::endl; \
+									std::cout << "\x1B[31mFAILED. Expected " << _a << " but got \"" << _b << "\"\x1B[0m" << std::endl; \
 								} \
 							}
 
 void unit_tests(void) {
-	static const char *test_str = "This is a test";
-	String string;
-	TEST_EQUALS(string.GetLength(), 0u);
-	TEST_EQUALS(string.GetText(), String::EMPTY);
 	const char *str;
-	uint offset = 0;
-	uint count = 0;
+	uint offset = 0u;
+	uint count = 0u;
+	static const char *test_str = "This is a test";
+
+	{
+		String string;
+		TEST_EQUALS(string.GetLength(), 0u);
+		TEST_EQUALS(string.GetText(), String::EMPTY);
+	}
 
 //---
-	string = String(test_str);
-	TEST_EQUALS(string.GetLength(), strlen(test_str));
-	TEST_EQUALS(string, test_str);
+	{
+		String string = String(test_str);
+		TEST_EQUALS(string.GetLength(), strlen(test_str));
+		TEST_EQUALS(string, test_str);
+	}
 
 //---
-	offset = 1u;
-	string = String(test_str, offset);
-	TEST_EQUALS(string.GetLength(), strlen(test_str + offset));
-	TEST_EQUALS(string, test_str + offset);
+	{
+		offset = 1u;
+		String string = String(test_str, offset);
+		TEST_EQUALS(string.GetLength(), strlen(test_str + offset));
+		TEST_EQUALS(string, test_str + offset);
+	}
 
-	offset = 10;
-	string = String(test_str, offset);
-	TEST_EQUALS(string.GetLength(), strlen(test_str + offset));
-	TEST_EQUALS(string, test_str + offset);
+	{
+		offset = 10;
+		String string = String(test_str, offset);
+		TEST_EQUALS(string.GetLength(), strlen(test_str + offset));
+		TEST_EQUALS(string, test_str + offset);
+	}
 
-	offset = 14u;
-	string = String(test_str, offset);
-	TEST_EQUALS(string.GetLength(), strlen(test_str + offset));
-//	TEST_EQUALS(string, test_str + offset);
+	{
+		offset = 14u;
+		String string = String(test_str, offset);
+		TEST_EQUALS(string.GetLength(), strlen(test_str + offset));
+	//	TEST_EQUALS(string, test_str + offset);
+	}
 
-	offset = 15u;
-	string = String(test_str, offset);
-	TEST_EQUALS(string.GetLength(), 0u);
-	TEST_EQUALS(string, "");
+	{
+		offset = 15u;
+		String string = String(test_str, offset);
+		TEST_EQUALS(string.GetLength(), 0u);
+		TEST_EQUALS(string, "");
+	}
 
 //---
-	offset = 1u;
-	count = 0u;
-	str = strncpy((char*)alloca(strlen(test_str + offset) + 1), test_str + offset, count + 1);
-	string = String(test_str, offset, count);
-	TEST_EQUALS(string.GetLength(), strlen(test_str));
-	TEST_EQUALS(string, str);
+	{
+		offset = 1u;
+		count = 0u;
+		str = strncpy((char*)alloca(strlen(test_str + offset) + 1), test_str + offset, count + 1);
+		String string = String(test_str, offset, count);
+		TEST_EQUALS(string.GetLength(), strlen(test_str));
+		TEST_EQUALS(string, str);
+	}
 
-	count = 1u;
-	str = strncpy((char*)alloca(strlen(test_str + offset) + 1), test_str + offset, count + 1);
-	string = String(test_str, offset, count);
-	TEST_EQUALS(string.GetLength(), strlen(test_str));
-	TEST_EQUALS(string, str);
+	{
+		count = 1u;
+		str = strncpy((char*)alloca(strlen(test_str + offset) + 1), test_str + offset, count + 1);
+		String string = String(test_str, offset, count);
+		TEST_EQUALS(string.GetLength(), strlen(test_str));
+		TEST_EQUALS(string, str);
+	}
 
-	count = 5u;
-	str = strncpy((char*)alloca(strlen(test_str + offset) + 1), test_str + offset, count + 1);
-	string = String(test_str, offset, count);
-	TEST_EQUALS(string.GetLength(), strlen(test_str));
-	TEST_EQUALS(string, str);
+	{
+		count = 5u;
+		str = strncpy((char*)alloca(strlen(test_str + offset) + 1), test_str + offset, count + 1);
+		String string = String(test_str, offset, count);
+		TEST_EQUALS(string.GetLength(), strlen(test_str));
+		TEST_EQUALS(string, str);
+	}
 
-	count = 13u;
-	str = strncpy((char*)alloca(strlen(test_str + offset) + 1), test_str + offset, count + 1);
-	string = String(test_str, offset, count);
-	TEST_EQUALS(string.GetLength(), strlen(test_str));
-	TEST_EQUALS(string, str);
+	{
+		count = 13u;
+		str = strncpy((char*)alloca(strlen(test_str + offset) + 1), test_str + offset, count + 1);
+		String string = String(test_str, offset, count);
+		TEST_EQUALS(string.GetLength(), strlen(test_str));
+		TEST_EQUALS(string, str);
+	}
 
-	count = 14u;
-//	str = strncpy((char*)alloca(strlen(test_str + offset) + 1), test_str + offset, count + 1);
-	string = String(test_str, offset, count);
-	TEST_EQUALS(string.GetLength(), 0u);
-	TEST_EQUALS(string, "");
+	{
+		count = 14u;
+	//	str = strncpy((char*)alloca(strlen(test_str + offset) + 1), test_str + offset, count + 1);
+		String string = String(test_str, offset, count);
+		TEST_EQUALS(string.GetLength(), 0u);
+		TEST_EQUALS(string, "");
+	}
 
-	count = 15u;
-	str = strncpy((char*)alloca(strlen(test_str + offset) + 1), test_str + offset, count + 1);
-	string = String(test_str, offset, count);
-	TEST_EQUALS(string.GetLength(), strlen(test_str));
-	TEST_EQUALS(string, "");
+	{
+		count = 15u;
+		str = strncpy((char*)alloca(strlen(test_str + offset) + 1), test_str + offset, count + 1);
+		String string = String(test_str, offset, count);
+		TEST_EQUALS(string.GetLength(), strlen(test_str));
+		TEST_EQUALS(string, "");
+	}
+
+	{
+		String string = "abc";
+		string += "xyz";
+		TEST_EQUALS(string, "abcxyz");
+	}
+
+	{
+		String string = "";	{
+		String string = "abc";
+		string += "xyz";
+		TEST_EQUALS(string, "abcxyz");
+	}
+
+
+		string += "xyz";
+		TEST_EQUALS(string, "xyz");
+	}
+
+	{
+		String string = "";
+		string += "xyz";
+		TEST_EQUALS(string, "xyz");
+	}
 }
+
+enum VerboseLevel {
+	eNoVerbosity, eMinimalVerbosity, eMaximalVerbosity
+};
 
 class HttpChannel {
 	int sd;
@@ -303,7 +377,8 @@ const char *HTTP_Format_Header =
 const char *HTTP_Body =
 	"<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 3.2 Final//EN\">\n"
 	"<html>\n"
-	"<head><meta http-equiv=\"refresh\" content=\"10\">\n"
+	// "<head><meta http-equiv=\"refresh\" content=\"10\">\n"
+	"<head>\n"
 	"<title>Index of /</title>\n"
 	"</head>\n"
 	"<body>\n"
@@ -314,17 +389,18 @@ const char *HTTP_Body =
 	"</html>\n"
 	"\n";
 
-enum VerboseLevel {
-	eNone, eMinimal, eMaximal
-};
-
-VerboseLevel verbose_level = eNone;
+VerboseLevel verbose_level = eNoVerbosity;
 uint16_t server_port = 8080;
 String servent = "80";
 int family = AF_UNSPEC;
 uint16_t interval = 0; // seconds
 std::vector<String> hostnames;
 
+/**
+ * void *ReportServlet(void *arg)
+ *
+ * Purpose: services client
+ */
 void *ReportServlet(void *arg) {
 	HttpChannel *channel = reinterpret_cast<HttpChannel*>(arg);
 
@@ -335,18 +411,18 @@ void *ReportServlet(void *arg) {
 
 	// recv(state->sd, buf1, sizeof(buf1), 0);
 	String message = channel->Receive();
-	if ( verbose_level == eMaximal ) {
+	if ( verbose_level == eMaximalVerbosity ) {
 		fprintf(stderr, "%s", message.GetText());
 	}
 
 	char buf1[10*1024];
 	snprintf(buf1, sizeof(buf1), HTTP_Format_Header, tmp_date, HTTP_Body);
-	if ( verbose_level == eMaximal ) {
+	if ( verbose_level == eMaximalVerbosity ) {
 		fprintf(stderr, "[%s]", buf1);
 	}
 	char buf2[10*1024];
 	snprintf(buf2, sizeof(buf2), buf1, strlen(buf1), tmp_date, "");
-	if ( verbose_level == eMaximal ) {
+	if ( verbose_level == eMaximalVerbosity ) {
 		fprintf(stderr, "[%s]", buf2);
 	}
 
@@ -374,7 +450,7 @@ void* ReportDispatchServer(void*) {
 
 					while (run) {
 						int client_sd = accept(server_sd, reinterpret_cast<struct sockaddr*>(&addr), &client_addr_size);
-						if ( verbose_level > eNone ) {
+						if ( verbose_level > eNoVerbosity ) {
 							std::cerr << "Client connection: " << std::endl; //FIXME: get reentrant address
 						}
 
@@ -403,13 +479,13 @@ void* ReportDispatchServer(void*) {
 
 void *PingService(void *arg) {
 	AddressInfo host = *reinterpret_cast<AddressInfo*>(arg);
-	if ( verbose_level > eNone ) {
+	if ( verbose_level > eNoVerbosity ) {
 		std::cerr << host << std::endl;
 	}
 
 	int sd = socket(host.family, host.socktype, 0);//, SOCK_NONBLOCK);
 	if ( sd > 0 ) {
-		if ( verbose_level > eNone ) {
+		if ( verbose_level > eNoVerbosity ) {
 			std::cerr << host;
 		}
 
@@ -439,10 +515,10 @@ void ProcessCommandLineArgs(char **args) {
 			family = AF_INET;
 
 		} else if ( string.StartsWith("--verbose=min") ) {
-			verbose_level = eMinimal;
+			verbose_level = eMinimalVerbosity;
 
 		} else if ( string.StartsWith("--verbose=max") ) {
-			verbose_level = eMaximal;
+			verbose_level = eMaximalVerbosity;
 
 		} else if ( string.StartsWith("--http-port=") ) {
 			server_port = atoi(String(*args, strlen("--http-port=")).GetText());
@@ -454,7 +530,11 @@ void ProcessCommandLineArgs(char **args) {
 			interval = atoi(*args + strlen("--interval="));
 
 		} else if ( string == "--help" ) {
-			std::cerr << "[--verbose=[minimal|maximal]] --port=[[-a-z0-9._/]+|[0-9]+] [--interval=[0-9]+] [--IPv4|--IPv6|] [<hostname>|<hostip]\n";
+			std::cerr << "[--verbose=[minimal|maximal]] --port=[[-a-z0-9._/]+|[0-9]+] [--interval=[0-9]+] [--IPv4|--IPv6|] [<hostname>|<hostip] [--run-tests]\n";
+			exit(0);
+
+		} else if ( string == "--run-tests") {
+			unit_tests();
 			exit(0);
 
 		} else {
@@ -475,7 +555,7 @@ std::vector<AddressInfo> CollectHosts(std::vector<String> hostnames) {
 	for ( String hostname : hostnames ) {
 		int getaddrinfo_err = getaddrinfo(hostname.GetText(), servent.GetText(), &addrinfo_hint, &addr_info);
 		if ( getaddrinfo_err == 0 ) {
-			if ( verbose_level > eNone ) {
+			if ( verbose_level > eNoVerbosity ) {
 				for ( struct addrinfo *p = addr_info; p != nullptr; p = p->ai_next ) {
 					sockaddr_in *addr = (sockaddr_in*)(p->ai_addr);
 					char addr_txt[100];
@@ -494,44 +574,18 @@ std::vector<AddressInfo> CollectHosts(std::vector<String> hostnames) {
 }
 
 int main(int cnt, char *args[]) {
-//	unit_tests();
+//--- interpret command line args
+	ProcessCommandLineArgs(args);
 
 //--- Start HTTP server
 	pthread_t tid;
 	pthread_create(&tid, nullptr, ReportDispatchServer, nullptr);
 	pthread_detach(tid);
 
-//--- interpret command line args
-	ProcessCommandLineArgs(args);
-
 //--- Collect hosts' addresses
 	std::vector<AddressInfo> host_addrs = CollectHosts(hostnames);
-	// struct addrinfo addrinfo_hint = {
-	// 	.ai_flags = (AI_V4MAPPED | AI_ADDRCONFIG | AI_CANONIDN),
-	// 	.ai_family = family,
-	// 	.ai_socktype = SOCK_STREAM
-	// };
-	// struct addrinfo *addr_info;
 
-	// for ( String hostname : hostnames ) {
-	// 	int getaddrinfo_err = getaddrinfo(hostname.GetText(), servent.GetText(), &addrinfo_hint, &addr_info);
-	// 	if ( getaddrinfo_err == 0 ) {
-	// 		if ( verbose_level > eNone ) {
-	// 			for ( struct addrinfo *p = addr_info; p != nullptr; p = p->ai_next ) {
-	// 				sockaddr_in *addr = (sockaddr_in*)(p->ai_addr);
-	// 				char addr_txt[100];
-	// 				inet_ntop(p->ai_family, &addr, addr_txt, p->ai_addrlen);
-	// 				std::cerr << "Family: " << p->ai_family << " name: \"" << hostname << "\" address: " << addr_txt << std::endl;
-	// 			}
-	// 		}
-	// 		host_addrs.push_back(AddressInfo(addr_info, hostname));
-	// 		freeaddrinfo(addr_info);
-
-	// 	} else {
-	// 		std::cerr << "Failure: getaddrinfo(" << hostnames[0] << ", " << servent << "): " << gai_strerror(getaddrinfo_err);
-	// 	}
-	// }
-
+//--- Run pind tests
 	if ( host_addrs.size() > 0 ) {
 		do {
 			std::cerr << "Connecting to... " << std::endl;
