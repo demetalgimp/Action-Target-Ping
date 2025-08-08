@@ -22,7 +22,7 @@ Unfortunately, providing a real-time update was out of my reach. So I did my bes
 * runtime - number of seconds the program is to run.
 * host list - any number of hosts to test.
 * systemd - can be installed as a systemd service. 
-* IPv4/IPv6 - ping with IPv4 or IPv6 [TBD].
+* IPv4/IPv6 - ping with IPv4 or IPv6.
 * ICMP - low-level ping [TBD].
 
 *To compile and install*
