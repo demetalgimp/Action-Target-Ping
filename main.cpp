@@ -224,119 +224,27 @@ void unit_tests(void) {
 	TEST_EQUALS(string, "");
 }
 
-struct ThreadState {
+class HttpChannel {
 	int sd;
-	ThreadState(int sd): sd(sd) {}
-	virtual ~ThreadState(void) {
-		shutdown(sd, SHUT_WR);
-		close(sd);
-	}
-};
 
-const char *HTTP_Format_Header =
-	"HTTP/1.1 200 OK\n"
-	"Date: %s"
-	"Server: Lone Wolf\n"
-	"Content-Length: %%8d\n"
-	"Connection: keep-alive\n"
-	"Content-Type: text/html;charset=ISO-8859-1\n"
-	"\n"
-	"%s\n";
-
-const char *HTTP_Body =
-	"<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 3.2 Final//EN\">\n"
-	"<html>\n"
-	"<head><meta http-equiv=\"refresh\" content=\"10\">\n"
-	"<title>Index of /</title>\n"
-	"</head>\n"
-	"<body>\n"
-	"<h1>%s</h1>\n"
-	"<hr>"
-	"%s\n"
-	"</body>\n"
-	"</html>\n"
-	"\n";
-
-enum VerboseLevel {
-	eNone, eMinimal, eMaximal
-};
-
-VerboseLevel verbose_level = eNone;
-
-void *ReportServlet(void *arg) {
-	ThreadState *state = reinterpret_cast<ThreadState*>(arg);
-
-	FILE *pp = popen("date", "r");
-	char tmp_date[50];
-	fgets(tmp_date, sizeof(tmp_date), pp);
-	pclose(pp);
-
-	char buf1[10*1024];
-	recv(state->sd, buf1, sizeof(buf1), 0);
-	if ( verbose_level == eMaximal ) {
-		fprintf(stderr, "%s", buf1);
-	}
-
-	snprintf(buf1, sizeof(buf1), HTTP_Format_Header, tmp_date, HTTP_Body);
-	if ( verbose_level == eMaximal ) {
-		fprintf(stderr, "[%s]", buf1);
-	}
-	char buf2[10*1024];
-	snprintf(buf2, sizeof(buf2), buf1, strlen(buf1), tmp_date, "");
-	if ( verbose_level == eMaximal ) {
-		fprintf(stderr, "[%s]", buf2);
-	}
-	send(state->sd, buf2, strlen(buf2), 0);
-	sleep(1); // <-- needed to get the data out to the client; else, the stream will be dumped.
-	delete state;
-	return arg;
-}
-
-uint16_t server_port = 8080;
-
-bool run = true;
-void* ReportDispatchServer(void*) {
-	int server_sd;
-	if ( (server_sd = socket(AF_INET, SOCK_STREAM, 0)) > 0 ) {
-
-		socklen_t value = 1;
-		if ( setsockopt(server_sd, SOL_SOCKET, SO_REUSEPORT, &value, sizeof(value)) == 0 ) {
-
-			struct sockaddr_in addr = { .sin_family = AF_INET, .sin_port = htons(server_port) };
-			addr.sin_addr.s_addr = INADDR_ANY;
-			if ( bind(server_sd, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) == 0 ) {
-
-				if ( listen(server_sd, 5) == 0 ) {
-					socklen_t client_addr_size;
-
-					while (run) {
-						int client_sd = accept(server_sd, reinterpret_cast<struct sockaddr*>(&addr), &client_addr_size);
-						if ( verbose_level > eNone ) {
-							std::cerr << "Client connection: " << std::endl; //FIXME: get reentrant address
-						}
-
-						pthread_t tid;
-						pthread_create(&tid, nullptr, ReportServlet, new ThreadState(client_sd));
-						pthread_detach(tid);
-					}
-
-				} else {
-					perror("listen()");
-				}
-
-			} else {
-				perror("bind()");
-			}
-
-		} else {
-			perror("setsockopt()");
+	public:
+		HttpChannel(int sd): sd(sd) {}
+		virtual ~HttpChannel(void) {
+			shutdown(sd, SHUT_WR);
+			close(sd);
 		}
 
-	} else {
-		perror("socket()");
-	}
-	return nullptr;
-}
+	public:
+		String Receive(int flags = 0) {
+			char buffer[20'000];
+			memset(buffer, 0, sizeof(buffer));
+			recv(sd, buffer, sizeof(buffer), flags);
+			return buffer;
+		}
+		void Send(const String& message, int flags = 0) {
+			send(sd, message.GetText(), message.GetLength(), flags);
+		}
+};
 
 struct AddressInfo {
 	int flags;
@@ -382,12 +290,146 @@ struct AddressInfo {
 	}
 };
 
+const char *HTTP_Format_Header =
+	"HTTP/1.1 200 OK\n"
+	"Date: %s"
+	"Server: Lone Wolf\n"
+	"Content-Length: %%8d\n"
+	"Connection: keep-alive\n"
+	"Content-Type: text/html;charset=ISO-8859-1\n"
+	"\n"
+	"%s\n";
+
+const char *HTTP_Body =
+	"<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 3.2 Final//EN\">\n"
+	"<html>\n"
+	"<head><meta http-equiv=\"refresh\" content=\"10\">\n"
+	"<title>Index of /</title>\n"
+	"</head>\n"
+	"<body>\n"
+	"<h1>%s</h1>\n"
+	"<hr>"
+	"%s\n"
+	"</body>\n"
+	"</html>\n"
+	"\n";
+
+enum VerboseLevel {
+	eNone, eMinimal, eMaximal
+};
+
+VerboseLevel verbose_level = eNone;
+uint16_t server_port = 8080;
 String servent = "80";
 int family = AF_UNSPEC;
 uint16_t interval = 0; // seconds
 std::vector<String> hostnames;
 
-void ProcessCommandArgs(char **args) {
+void *ReportServlet(void *arg) {
+	HttpChannel *channel = reinterpret_cast<HttpChannel*>(arg);
+
+	FILE *pp = popen("date", "r");
+	char tmp_date[50];
+	fgets(tmp_date, sizeof(tmp_date), pp);
+	pclose(pp);
+
+	// recv(state->sd, buf1, sizeof(buf1), 0);
+	String message = channel->Receive();
+	if ( verbose_level == eMaximal ) {
+		fprintf(stderr, "%s", message.GetText());
+	}
+
+	char buf1[10*1024];
+	snprintf(buf1, sizeof(buf1), HTTP_Format_Header, tmp_date, HTTP_Body);
+	if ( verbose_level == eMaximal ) {
+		fprintf(stderr, "[%s]", buf1);
+	}
+	char buf2[10*1024];
+	snprintf(buf2, sizeof(buf2), buf1, strlen(buf1), tmp_date, "");
+	if ( verbose_level == eMaximal ) {
+		fprintf(stderr, "[%s]", buf2);
+	}
+
+	// send(state->sd, buf2, strlen(buf2), 0);
+	channel->Send(buf2);
+	sleep(1); // <-- needed to get the data out to the client; else, the stream will be dumped.
+	delete channel;
+	return arg;
+}
+
+bool run = true;
+void* ReportDispatchServer(void*) {
+	int server_sd;
+	if ( (server_sd = socket(AF_INET, SOCK_STREAM, 0)) > 0 ) {
+
+		socklen_t value = 1;
+		if ( setsockopt(server_sd, SOL_SOCKET, SO_REUSEPORT, &value, sizeof(value)) == 0 ) {
+
+			struct sockaddr_in addr = { .sin_family = AF_INET, .sin_port = htons(server_port) };
+			addr.sin_addr.s_addr = INADDR_ANY;
+			if ( bind(server_sd, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) == 0 ) {
+
+				if ( listen(server_sd, 5) == 0 ) {
+					socklen_t client_addr_size;
+
+					while (run) {
+						int client_sd = accept(server_sd, reinterpret_cast<struct sockaddr*>(&addr), &client_addr_size);
+						if ( verbose_level > eNone ) {
+							std::cerr << "Client connection: " << std::endl; //FIXME: get reentrant address
+						}
+
+						pthread_t tid;
+						pthread_create(&tid, nullptr, ReportServlet, new HttpChannel(client_sd));
+						pthread_detach(tid);
+					}
+
+				} else {
+					perror("listen()");
+				}
+
+			} else {
+				perror("bind()");
+			}
+
+		} else {
+			perror("setsockopt()");
+		}
+
+	} else {
+		perror("socket()");
+	}
+	return nullptr;
+}
+
+void *PingService(void *arg) {
+	AddressInfo host = *reinterpret_cast<AddressInfo*>(arg);
+	if ( verbose_level > eNone ) {
+		std::cerr << host << std::endl;
+	}
+
+	int sd = socket(host.family, host.socktype, 0);//, SOCK_NONBLOCK);
+	if ( sd > 0 ) {
+		if ( verbose_level > eNone ) {
+			std::cerr << host;
+		}
+
+		int retries = 1000;
+		while ( retries-- > 0  &&  connect(sd, host.addr, host.addrlen) != 0  &&  errno == EAGAIN ) {
+			usleep(1'000);
+		}
+		std::cerr << "\t" << host.canonname << (retries <= 0? " failure!": " success!") << "(" << (1'000 - retries) * 1'000 << "ms)" << std::endl;
+
+		std::cerr.flush();
+		shutdown(sd, SHUT_WR);
+		close(sd);
+
+	} else {
+		perror("socket()");
+	}
+	return arg;
+}
+
+void ProcessCommandLineArgs(char **args) {
 	while ( *++args != nullptr ) {
 		String string(*args);
 		if ( string.StartsWith("--port=") ) {
@@ -421,46 +463,7 @@ void ProcessCommandArgs(char **args) {
 	}
 }
 
-void *PingService(void *arg) {
-	AddressInfo host = *reinterpret_cast<AddressInfo*>(arg);
-	if ( verbose_level > eNone ) {
-		std::cerr << host << std::endl;
-	}
-
-	int sd = socket(host.family, host.socktype, 0);//, SOCK_NONBLOCK);
-	if ( sd > 0 ) {
-		if ( verbose_level > eNone ) {
-			std::cerr << host;
-		}
-
-		int retries = 1000;
-		while ( retries-- > 0  &&  connect(sd, host.addr, host.addrlen) != 0  &&  errno == EAGAIN ) {
-			usleep(1'000);
-		}
-		std::cerr << "\t" << host.canonname << (retries <= 0? " failure!": " success!") << "(" << (1'000 - retries) * 1'000 << "ms)" << std::endl;
-
-		std::cerr.flush();
-		shutdown(sd, SHUT_WR);
-		close(sd);
-
-	} else {
-		perror("socket()");
-	}
-	return arg;
-}
-
-int main(int cnt, char *args[]) {
-//	unit_tests();
-
-//--- Start HTTP server
-	pthread_t tid;
-	pthread_create(&tid, nullptr, ReportDispatchServer, nullptr);
-	pthread_detach(tid);
-
-//--- interpret command line args
-	ProcessCommandArgs(args);
-
-//--- Collect hosts' addresses
+std::vector<AddressInfo> CollectHosts(std::vector<String> hostnames) {
 	std::vector<AddressInfo> host_addrs;
 	struct addrinfo addrinfo_hint = {
 		.ai_flags = (AI_V4MAPPED | AI_ADDRCONFIG | AI_CANONIDN),
@@ -487,39 +490,53 @@ int main(int cnt, char *args[]) {
 			std::cerr << "Failure: getaddrinfo(" << hostnames[0] << ", " << servent << "): " << gai_strerror(getaddrinfo_err);
 		}
 	}
+	return host_addrs;
+}
+
+int main(int cnt, char *args[]) {
+//	unit_tests();
+
+//--- Start HTTP server
+	pthread_t tid;
+	pthread_create(&tid, nullptr, ReportDispatchServer, nullptr);
+	pthread_detach(tid);
+
+//--- interpret command line args
+	ProcessCommandLineArgs(args);
+
+//--- Collect hosts' addresses
+	std::vector<AddressInfo> host_addrs = CollectHosts(hostnames);
+	// struct addrinfo addrinfo_hint = {
+	// 	.ai_flags = (AI_V4MAPPED | AI_ADDRCONFIG | AI_CANONIDN),
+	// 	.ai_family = family,
+	// 	.ai_socktype = SOCK_STREAM
+	// };
+	// struct addrinfo *addr_info;
+
+	// for ( String hostname : hostnames ) {
+	// 	int getaddrinfo_err = getaddrinfo(hostname.GetText(), servent.GetText(), &addrinfo_hint, &addr_info);
+	// 	if ( getaddrinfo_err == 0 ) {
+	// 		if ( verbose_level > eNone ) {
+	// 			for ( struct addrinfo *p = addr_info; p != nullptr; p = p->ai_next ) {
+	// 				sockaddr_in *addr = (sockaddr_in*)(p->ai_addr);
+	// 				char addr_txt[100];
+	// 				inet_ntop(p->ai_family, &addr, addr_txt, p->ai_addrlen);
+	// 				std::cerr << "Family: " << p->ai_family << " name: \"" << hostname << "\" address: " << addr_txt << std::endl;
+	// 			}
+	// 		}
+	// 		host_addrs.push_back(AddressInfo(addr_info, hostname));
+	// 		freeaddrinfo(addr_info);
+
+	// 	} else {
+	// 		std::cerr << "Failure: getaddrinfo(" << hostnames[0] << ", " << servent << "): " << gai_strerror(getaddrinfo_err);
+	// 	}
+	// }
 
 	if ( host_addrs.size() > 0 ) {
 		do {
 			std::cerr << "Connecting to... " << std::endl;
 			for ( AddressInfo host : host_addrs ) {
 				PingService(&host);
-				// pthread_create(&tid, nullptr, PingService, &host);
-				// pthread_detach(tid);
-
-				// if ( verbose_level > eNone ) {
-				// 	std::cerr << host << std::endl;
-				// }
-
-				// int sd = socket(host.family, host.socktype, 0);
-				// if ( sd > 0 ) {
-				// 	if ( verbose_level > eNone ) {
-				// 		std::cerr << host;
-				// 	}
-
-				// 	if ( connect(sd, host.addr, host.addrlen) == 0 ) {
-				// 		std::cerr << "\t" << host.canonname << " success!" << std::endl;
-
-				// 	} else {
-				// 		std::cerr << "\t" << host.canonname << " failure!" << std::endl;
-				// 	}
-
-				// 	std::cerr.flush();
-				// 	shutdown(sd, SHUT_WR);
-				// 	close(sd);
-
-				// } else {
-				// 	perror("socket()");
-				// }
 			}
 			sleep(interval);
 		} while ( interval > 0 );
