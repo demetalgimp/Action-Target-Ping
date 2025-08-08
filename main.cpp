@@ -315,7 +315,7 @@ struct AddressInfo {
 	int family;
 	int socktype;
 	int protocol;
-	socklen_t addrlen;
+	socklen_t address_len;
 	union {
 		struct sockaddr* addr;
 		struct sockaddr_in* addr_in4;
@@ -324,21 +324,25 @@ struct AddressInfo {
 	String canonname;
 	String address;
 
-	AddressInfo(addrinfo *info, const String& hostname): flags(info->ai_flags), family(info->ai_family), socktype(info->ai_socktype),
-														protocol(info->ai_protocol), addrlen(info->ai_addrlen), canonname(hostname)
+	AddressInfo(addrinfo *info, const String& hostname)
+			: flags(info->ai_flags), family(info->ai_family), socktype(info->ai_socktype), protocol(info->ai_protocol),
+			  address_len(info->ai_addrlen), canonname(hostname)
 	{
 		char tmps[100];
-		if ( addrlen == sizeof(struct sockaddr_in) ) {
-			addr_in4 = reinterpret_cast<struct sockaddr_in*>(memcpy(new sockaddr_in(), info->ai_addr, addrlen));
-//			address = String(inet_ntoa(addr_in4->sin_addr));
-			address = inet_ntop(family, (void*)(&reinterpret_cast<struct sockaddr_in*>(info->ai_addr)->sin_addr), tmps, info->ai_addrlen);
+		void *addr = info->ai_addr;
+		address = inet_ntop(family, addr, tmps, info->ai_addrlen);
 
-		} else if ( addrlen == sizeof(struct sockaddr_in6) ) {
-			addr_in6 = reinterpret_cast<struct sockaddr_in6*>(memcpy(new sockaddr_in6(), info->ai_addr, addrlen));
-			address = inet_ntop(family, (void*)(&reinterpret_cast<struct sockaddr_in*>(info->ai_addr)->sin_addr), tmps, info->ai_addrlen);
+		if ( family == AF_INET ) {//} == sizeof(struct sockaddr_in) ) {
+			addr_in4 = reinterpret_cast<struct sockaddr_in*>(memcpy(new sockaddr_in(), info->ai_addr, address_len));
+			// address = String(inet_ntoa(addr_in4->sin_addr));
+			// address = inet_ntop(family, (void*)(&reinterpret_cast<struct sockaddr_in*>(info->ai_addr)->sin_addr), tmps, info->ai_addrlen);
+
+		} else if ( family == AF_INET6 ) {//addrlen == sizeof(struct sockaddr_in6) ) {
+			addr_in6 = reinterpret_cast<struct sockaddr_in6*>(memcpy(new sockaddr_in6(), info->ai_addr, address_len));
+			// address = inet_ntop(family, (void*)(&reinterpret_cast<struct sockaddr_in6*>(info->ai_addr)->sin6_addr), tmps, info->ai_addrlen);
 
 		} else {
-			addr = reinterpret_cast<struct sockaddr*>(memcpy(new sockaddr(), info->ai_addr, addrlen));
+			addr = reinterpret_cast<struct sockaddr*>(memcpy(new sockaddr(), info->ai_addr, address_len));
 		}
 	}
 	virtual ~AddressInfo(void) {
@@ -348,7 +352,7 @@ struct AddressInfo {
 		}
 	}
 	friend std::ostream& operator<<(std::ostream& stream, const AddressInfo& addrinfo) {
-		return (stream 	<< " name=" << addrinfo.canonname
+		return (stream 	<< "\tname=" << addrinfo.canonname
 						<< " flags=" << addrinfo.flags
 						<< " family=" << addrinfo.family
 						<< " socktype=" << addrinfo.socktype
@@ -364,7 +368,8 @@ VerboseLevel mVerboseLevel = eNoVerbosity;
 uint16_t mServerPort = 8080;
 String mServent = "80";
 int mFamily = AF_UNSPEC;
-uint16_t mInterval = 0; // seconds
+uint32_t mRuntime = 100; //seconds
+uint16_t mInterval = 0; // milliseconds
 std::vector<String> mHostnames;
 std::vector<String> mReportLog;
 
@@ -481,10 +486,6 @@ void* ReportDispatchServer(void*) {
  */
 void *PingService(void *arg) {
 	AddressInfo host = *reinterpret_cast<AddressInfo*>(arg);
-	if ( mVerboseLevel > eNoVerbosity ) {
-		std::cerr << host << std::endl;
-	}
-
 	int sd = socket(host.family, host.socktype, 0);//, SOCK_NONBLOCK);
 	if ( sd > 0 ) {
 		if ( mVerboseLevel > eNoVerbosity ) {
@@ -492,7 +493,7 @@ void *PingService(void *arg) {
 		}
 
 		int retries = 1000;
-		while ( retries-- > 0  &&  connect(sd, host.addr, host.addrlen) != 0  &&  errno == EAGAIN ) {
+		while ( retries-- > 0  &&  connect(sd, host.addr, host.address_len) != 0  &&  errno == EAGAIN ) {
 			usleep(1000);
 		}
 		std::cerr << "\t" << host.canonname << (retries <= 0? " failure!": " success!") << "(" << (1000 - retries) * 1000 << "ms)" << std::endl;
@@ -528,12 +529,17 @@ void ProcessCommandLineArgs(char **args) {
 	while ( *++args != nullptr ) {
 		String string(*args);
 		if ( string.StartsWith("--port=") ) {
-			mServent = String(*args, 7);
+			mServent = String(*args, strlen("--port="));
 
 		} else if ( string == "--IPv4" ) {
 			mFamily = AF_INET;
 
 		} else if ( string == "--IPv6" ) {
+			std::cerr << "IPv6 is not yet implemented.";
+			mFamily = AF_INET6;
+
+		} else if ( string == "--ICMP" ) {
+			std::cerr << "ICMP is not yet implemented.";
 			mFamily = AF_INET6;
 
 		} else if ( string.StartsWith("--verbose=min") ) {
@@ -545,11 +551,14 @@ void ProcessCommandLineArgs(char **args) {
 		} else if ( string.StartsWith("--http-port=") ) {
 			mServerPort = atoi(String(*args, strlen("--http-port=")).GetText());
 
+		} else if ( string.StartsWith("--runtime=") ) {
+			mRuntime = atoi(String(*args, strlen("--runtime=")).GetText());
+
 		} else if ( string.StartsWith("--interval=") ) {
 			mInterval = atoi(*args + strlen("--interval="));
 
 		} else if ( string == "--help" ) {
-			std::cerr << "[--verbose=[minimal|maximal]] --port=[[-a-z0-9._/]+|[0-9]+] [--interval=[0-9]+] [--IPv4|--IPv6|] [<hostname>|<hostip] [--run-tests]\n";
+			std::cerr << "[--verbose=[minimal|maximal]] [--runtime=[0-9]+] --port=[[-a-z0-9._/]+|[0-9]+] [--interval=[0-9]+] [--IPv4|--IPv6|--ICMP] [<hostname>|<hostip] [--run-tests]\n";
 			exit(0);
 
 		} else if ( string == "--run-tests") {
@@ -637,13 +646,13 @@ int main(int cnt, char *args[]) {
 			for ( AddressInfo host : host_addrs ) {
 				PingService(&host);
 			}
-			sleep(mInterval);
+			usleep(mInterval);
 		} while ( mInterval > 0 );
 
 		std::cerr.flush();
 	}
 
-	sleep(100);
+	sleep(mRuntime);
 	run = false;
 }
 
