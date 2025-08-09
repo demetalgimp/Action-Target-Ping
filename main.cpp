@@ -15,11 +15,33 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netinet/ip_icmp.h>
+#include <sys/wait.h>
 #include <netdb.h>
 #include <arpa/inet.h>
 #include <pthread.h>
 #include <iostream>
 #include <vector>
+
+#define TEST_EQUALS(expected, got) 	{ \
+								auto _expected = expected; \
+								auto _got = got; \
+								std::cout << "\t" << __FILE__ << "[" << __LINE__ << "] " << #expected << " " << #got << "..."; \
+								if ( _expected == _got ) { \
+									std::cout << "\x1B[32mPASSED.\x1B[0m\n"; \
+								} else { \
+									std::cout << "\x1B[31mFAILED. Expected \"" << _expected << "\" but got \"" << _got << "\"\x1B[0m" << std::endl; \
+								} \
+							}
+#define TEST_TRUE(test) 	{ \
+								auto _test = test; \
+								std::cout << "\t" << __FILE__ << "[" << __LINE__ << "]" << "..."; \
+								std::cout << "\x1B[32m" << (_test? "PASSED": "FAILED") << ".\x1B[0m" << std::endl; \
+							}
+#define TEST_FALSE(test) 	{ \
+								auto _test = test; \
+								std::cout << "\t" << __FILE__ << "[" << __LINE__ << "]" << "..."; \
+								std::cout << "\x1B[32m" << (!_test? "PASSED": "FAILED") << ".\x1B[0m" << std::endl; \
+							}
 
 typedef unsigned int uint;
 
@@ -90,10 +112,12 @@ class String {
 		std::vector<String> Split(char c) {
 			std::vector<String> results;
 			uint head = 0, tail = 0;
-			while ( head < length ) {
+			while ( text[head] != 0  &&  head < length ) {
 				if ( text[head] == c ) {
 					results.push_back(String(text + tail, head - tail));
+					tail = head;
 				}
+				head++;
 			}
 			if ( tail < head ) {
 				results.push_back(String(text + tail, head - tail));
@@ -105,26 +129,18 @@ class String {
 		String& operator=(const String& string) {
 			if ( text != EMPTY ) {
 				delete [] text;
+				text = EMPTY;
+				length = 0;
 			}
-			length = 0;
-			if ( string.IsEmpty() ) {
-				// delete [] text;
-				// length = 0;
+			if ( string.IsEmpty() ) { // <-- If the param 'string' == EMPTY, clear *this
+				length = 0;
 				text = EMPTY;
 
-			} else if ( !IsEmpty() ) {
-				// delete [] text;
-				// text = EMPTY; // <-- reset for double-free errors
-				// length = 0;
-				if ( !string.IsEmpty() ) {
-					text = strdup(string.text);
-				}
+			} else {
+				text = strdup(string.text);
 				length = string.length;
-
-			// } else if ( !string.IsEmpty() ) {
-				// text = strdup(string.text);
-				// length = string.length;
 			}
+
 			return *this;
 		}
 		friend std::ostream& operator<<(std::ostream& stream, const String& string) {
@@ -166,37 +182,27 @@ class String {
 		}
 };
 
-#define TEST_EQUALS(expected, got) 	{ \
-								printf("%s[%d] %s == %s... ", __FILE__, __LINE__, #expected, #got); \
-								auto _expected = expected; \
-								auto _got = got; \
-								if ( _expected == _got ) { \
-									std::cout << "\x1B[32mPASSED.\x1B[0m\n"; \
-								} else { \
-									std::cout << "\x1B[31mFAILED. Expected \"" << _expected << "\" but got \"" << _got << "\"\x1B[0m" << std::endl; \
-								} \
-							}
-
 void unit_tests(void) {
 	// const char *str;
 	uint offset = 0u;
 	uint count = 0u;
 	static const char *test_str = "This is a test";
 
-	{
+	{	std::cout << "-----------------------------------String()-----------------------------------" << std::endl;
 		String string;
 		TEST_EQUALS(string.GetLength(), 0u);
 		TEST_EQUALS(String::EMPTY, string.GetText());
 	}
 
-//---
-	{
-		String string = String(test_str);
+	{	std::cout << "------------------------------String(const char*)-----------------------------" << std::endl;
+		String string(test_str);
 		TEST_EQUALS(string.GetLength(), strlen(test_str));
 		TEST_EQUALS(String(test_str), string);
+	}
 
+	{	std::cout << "-----------------------String(const char*, uint offset)-----------------------" << std::endl;
 		offset = 1u;
-		string = String(test_str, offset);
+		String string = String(test_str, offset);
 		TEST_EQUALS(string.GetLength(), strlen(test_str + offset));
 		TEST_EQUALS(String(test_str + offset), string);
 
@@ -208,7 +214,7 @@ void unit_tests(void) {
 		offset = 14u;
 		string = String(test_str, offset);
 		TEST_EQUALS(string.GetLength(), strlen(test_str + offset));
-	//	TEST_EQUALS(string, test_str + offset);
+		TEST_EQUALS(string, test_str + offset);
 
 		offset = 15u;
 		string = String(test_str, offset);
@@ -216,47 +222,40 @@ void unit_tests(void) {
 		TEST_EQUALS(String(""), string);
 	}
 
-//---
-	{
+	{	std::cout << "-----------------String(const char*, uint offset, uint count)-----------------" << std::endl;
 		offset = 1u;
 		count = 0u;
-		// str = strncpy((char*)alloca(strlen(test_str + offset) + 1), test_str + offset, count + 1);
 		String string = String(test_str, offset, count);
 		TEST_EQUALS(strlen(test_str + offset), string.GetLength());
 		TEST_EQUALS(String("his is a test"), string);
 
 		count = 1u;
-		// str = strncpy((char*)alloca(strlen(test_str + offset) + 1), test_str + offset, count + 1);
 		string = String(test_str, offset, count);
 		TEST_EQUALS(count, string.GetLength());
 		TEST_EQUALS(String("h"), string);
 
 		count = 5u;
-		// str = strncpy((char*)alloca(strlen(test_str + offset) + 1), test_str + offset, count + 1);
 		string = String(test_str, offset, count);
 		TEST_EQUALS(count, string.GetLength());
 		TEST_EQUALS(String("his i"), string);
 
 		count = 13u;
-		// str = strncpy((char*)alloca(strlen(test_str + offset) + 1), test_str + offset, count + 1);
 		string = String(test_str, offset, count);
 		TEST_EQUALS(count, string.GetLength());
 		TEST_EQUALS(String("his is a test"), string);
 
 		count = 14u;
-	//	str = strncpy((char*)alloca(strlen(test_str + offset) + 1), test_str + offset, count + 1);
 		string = String(test_str, offset, count);
 		TEST_EQUALS(count - offset, string.GetLength());
 		TEST_EQUALS(String("his is a test"), string);
 
 		count = 15u;
-		// str = strncpy((char*)alloca(strlen(test_str + offset) + 1), test_str + offset, count + 1);
 		string = String(test_str, offset, count);
 		TEST_EQUALS(13u, string.GetLength());
 		TEST_EQUALS(String("his is a test"), string);
 	}
 
-	{
+	{ 	std::cout << "--------------------String operator+=(const String& string)-------------------" << std::endl;
 		String string = "abc";
 		string += "xyz";
 		TEST_EQUALS(String("abcxyz"), string);
@@ -267,11 +266,97 @@ void unit_tests(void) {
 
 		string = "abc";
 		string += "";
-		TEST_EQUALS(string, "abc");
+		TEST_EQUALS(String("abc"), string);
 
 		string = "";
 		string += "";
-		TEST_EQUALS(string, "");
+		TEST_EQUALS(String(""), string);
+	}
+
+	{ 	std::cout << "-------------------String& operator=(const String& string)--------------------" << std::endl;
+		String string("");
+		string = "test";
+		TEST_EQUALS(String("test"), string);
+		string = "";
+		TEST_EQUALS(String(""), string);
+	}
+
+	{ 	std::cout << "--------------------bool operator==(const String& string)---------------------" << std::endl;
+		TEST_EQUALS(String(), "");
+		TEST_EQUALS(String("abc"), "abc");
+	}
+
+	{	std::cout << "-----------------bool StartsWith(const String& target) const------------------" << std::endl;
+		String string;
+		TEST_TRUE(string.StartsWith(""));
+		TEST_FALSE(string.StartsWith("a"));
+		string = "";
+		TEST_TRUE(string.StartsWith(""));
+		string = "a";
+		TEST_TRUE(string.StartsWith(""));
+		TEST_TRUE(string.StartsWith("a"));
+		string = "aaaaabbbbb";
+		TEST_TRUE(string.StartsWith("aaaa"));
+		TEST_TRUE(string.StartsWith("aaaaab"));
+		TEST_FALSE(string.StartsWith("abaa"));
+	}
+
+	{ 	std::cout << "---------------------------bool IsEmpty(void) const---------------------------" << std::endl;
+		String string;
+		TEST_TRUE(string.IsEmpty());
+		string = "asd";
+		TEST_FALSE(string.IsEmpty());
+		string = "";
+		TEST_TRUE(string.IsEmpty());
+	}
+
+	{ 	std::cout << "--------------------------uint GetLength(void) const--------------------------" << std::endl;
+		String string;
+		TEST_EQUALS(string.GetLength(), 0u);
+		string = "asdf";
+		TEST_EQUALS(string.GetLength(), 4u);
+	}
+
+	{ 	std::cout << "-----------------------const char* GetText(void) const------------------------" << std::endl;
+		String string;
+		TEST_EQUALS(string.GetText(), "");
+		string = "123456";
+		TEST_EQUALS(String(string.GetText()), "123456");
+	}
+
+	{	std::cout << "----------------------std::vector<String> Split(char c)-----------------------" << std::endl;
+		String string("");
+		std::vector<String> strings = string.Split(' ');
+		TEST_EQUALS(strings.size(), 1u);
+		TEST_EQUALS(strings[0], "");
+
+		string = String("abc");
+		strings = string.Split(' ');
+		TEST_EQUALS(strings.size(), 1u);
+		TEST_EQUALS(strings[0], "abc");
+
+		string = String("abc ");
+		strings = string.Split(' ');
+		TEST_EQUALS(strings.size(), 2u);
+		TEST_EQUALS(strings[0], "abc");
+		TEST_EQUALS(strings[1], "");
+
+		string = String("abc def");
+		strings = string.Split(' ');
+		TEST_EQUALS(strings.size(), 2u);
+		TEST_EQUALS(strings[0], "abc");
+		TEST_EQUALS(strings[1], "def");
+
+		string = String("This is a test of the ");
+		strings = string.Split(' ');
+		TEST_EQUALS(strings.size(), 7u);
+		TEST_EQUALS(strings[0], "This");
+		TEST_EQUALS(strings[1], "is");
+		TEST_EQUALS(strings[2], "a");
+		TEST_EQUALS(strings[3], "test");
+		TEST_EQUALS(strings[4], "of");
+		TEST_EQUALS(strings[5], "the");
+		TEST_EQUALS(strings[6], "");
 	}
 }
 
@@ -283,12 +368,12 @@ enum VerboseLevel {
  * class HttpChannel
  * 		This class encapsulates the internet channel, supplying the I/O for the user.
  */
-class HttpChannel {
+class SocketStreamChannel {
 	int sd;
 
 	public:
-		HttpChannel(int sd): sd(sd) {}
-		virtual ~HttpChannel(void) {
+		SocketStreamChannel(int sd): sd(sd) {}
+		virtual ~SocketStreamChannel(void) {
 			shutdown(sd, SHUT_WR);
 			close(sd);
 		}
@@ -368,6 +453,7 @@ VerboseLevel mVerboseLevel = eNoVerbosity;
 uint16_t mServerPort = 8080;
 String mServent = "80";
 int mFamily = AF_UNSPEC;
+int mSocketType = SOCK_STREAM;
 uint32_t mRuntime = 100; //seconds
 uint16_t mInterval = 0; // milliseconds
 std::vector<String> mHostnames;
@@ -387,7 +473,7 @@ String GenerateHttpReport(std::vector<String>& report_log) {
 	String date_str(tmps);
 	String http_reply("HTTP/1.1 200 OK\nDate:");
 	http_reply += date_str;
-	http_reply += "Server: Lone Wolf\nContent-Length: %8d\n";
+	http_reply += "Server: Lone Wolf\nContent-Length: %-8d\n";
 	http_reply += "Connection: keep-alive\nContent-Type: text/html;charset=ISO-8859-1\n";
 	http_reply += "\n";
 	http_reply += "<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 3.2 Final//EN\">\n<html><head>\n";
@@ -397,10 +483,11 @@ String GenerateHttpReport(std::vector<String>& report_log) {
 		http_reply += logline;
 	}
 	http_reply += "<hr></body>\n</html>\n\n";
-	uint report_size = http_reply.GetLength();// + 5;
+	uint report_size = http_reply.GetLength() + 5;
 	tmps = reinterpret_cast<char*>(alloca(report_size));
 	// char tmps[report_size];
 	snprintf(tmps, report_size, http_reply.GetText(), report_size);
+	if ( mVerboseLevel > eMinimalVerbosity ) { std::cerr << "Reply: " << tmps; }
 	return tmps;
 }
 
@@ -411,7 +498,10 @@ String GenerateHttpReport(std::vector<String>& report_log) {
  * 		This is the client server. It's only purpose is to supply the HTML log of pinged servers.
  */
 void *ReportServlet(void *arg) {
-	HttpChannel *channel = reinterpret_cast<HttpChannel*>(arg);
+	SocketStreamChannel *channel = reinterpret_cast<SocketStreamChannel*>(arg);
+	String request = channel->Receive();
+	if ( mVerboseLevel > eMinimalVerbosity ) { std::cerr << "Request: " << request; }
+
 	channel->Send(GenerateHttpReport(mReportLog));
 	sleep(1); // <-- needed to get the data out to the client; else, the stream will be dumped.
 	delete channel;
@@ -427,29 +517,39 @@ void *ReportServlet(void *arg) {
  * 			> the setsockopt ensures that if the program fails, the port is not tied up for upto 5 minutes.
  * 			> when a connection is established, the servlet thread is started.
  */
+const char *SocketTypeNames[] = {
+	"(null)", "Stream", "Datagram", "Raw", "Sequenced, reliable, connection-based, datagrams",
+	"Sequenced, reliable, connection-based, datagrams", "Datagram Congestion Control", "(null)",
+	"(null)", "(null)", "Packet"
+};
+
 bool run = true;
 void* ReportDispatchServer(void*) {
 	int server_sd;
 	if ( (server_sd = socket(AF_INET, SOCK_STREAM, 0)) > 0 ) {
-
+fprintf(stderr, "!!!%s:%d\n", __FILE__, __LINE__);
 		socklen_t value = 1;
-		if ( setsockopt(server_sd, SOL_SOCKET, SO_REUSEPORT, &value, sizeof(value)) == 0 ) {
+		if ( setsockopt(server_sd, SOL_SOCKET, SO_REUSEPORT, &value, sizeof(value)) == 0 ) {   // <-- Ensure that the port is "unlocked."
+fprintf(stderr, "!!!%s:%d\n", __FILE__, __LINE__);
 
 			struct sockaddr_in addr = { .sin_family = AF_INET, .sin_port = htons(mServerPort) };
 			addr.sin_addr.s_addr = INADDR_ANY;
-			if ( bind(server_sd, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) == 0 ) {
+			if ( bind(server_sd, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) == 0 ) {   // <-- Assign port
+fprintf(stderr, "!!!%s:%d Grabbed port #%d\n", __FILE__, __LINE__, mServerPort);
 
 				if ( listen(server_sd, 5) == 0 ) {
+fprintf(stderr, "!!!%s:%d Listener\n", __FILE__, __LINE__);
 					socklen_t client_addr_size;
 
 					while (run) {
+fprintf(stderr, "!!!%s:%d Accept()... wait for connection.\n", __FILE__, __LINE__);
 						int client_sd = accept(server_sd, reinterpret_cast<struct sockaddr*>(&addr), &client_addr_size);
-						if ( mVerboseLevel > eNoVerbosity ) {
-							std::cerr << "Client connection: " << std::endl; //FIXME: get reentrant address
-						}
+
+fprintf(stderr, "!!!%s:%d Connected!\n", __FILE__, __LINE__);
+						if ( mVerboseLevel > eNoVerbosity ) { std::cerr << "Client connection: " << std::endl; }//FIXME: get reentrant address
 
 						pthread_t tid;
-						pthread_create(&tid, nullptr, ReportServlet, new HttpChannel(client_sd));
+						pthread_create(&tid, nullptr, ReportServlet, new SocketStreamChannel(client_sd));
 						pthread_detach(tid);
 					}
 
@@ -486,17 +586,25 @@ void* ReportDispatchServer(void*) {
  */
 void *PingService(void *arg) {
 	AddressInfo host = *reinterpret_cast<AddressInfo*>(arg);
-	int sd = socket(host.family, host.socktype, 0);//, SOCK_NONBLOCK);
+
+	if ( mVerboseLevel > eMinimalVerbosity ) {
+		std::cerr << "Open socket (family=" << host.family << " socket-type=" << host.socktype << ")" << std::endl;
+	}
+
+	int sd = socket(host.family, host.socktype, 0);
 	if ( sd > 0 ) {
 		if ( mVerboseLevel > eNoVerbosity ) {
 			std::cerr << host;
 		}
 
+	//--- Attempt connection
 		int retries = 1000;
 		while ( retries-- > 0  &&  connect(sd, host.addr, host.address_len) != 0  &&  errno == EAGAIN ) {
-			usleep(1000);
+			usleep(100);
 		}
-		std::cerr << "\t" << host.canonname << (retries <= 0? " failure!": " success!") << "(" << (1000 - retries) * 1000 << "ms)" << std::endl;
+
+	//--- Report string
+		std::cerr << "\t" << host.canonname << (retries <= 0? " failure!": " success!") << "(" << (1000 - retries) * 100 << "ms)" << std::endl;
 		String log;
 		log += "\t";
 		log += host.canonname;
@@ -506,6 +614,7 @@ void *PingService(void *arg) {
 		log += "ms)\n";
 		mReportLog.push_back(log);
 
+	//--- Shutdown
 		std::cerr.flush();
 		shutdown(sd, SHUT_WR);
 		close(sd);
@@ -535,12 +644,15 @@ void ProcessCommandLineArgs(char **args) {
 			mFamily = AF_INET;
 
 		} else if ( string == "--IPv6" ) {
-			std::cerr << "IPv6 is not yet implemented.";
 			mFamily = AF_INET6;
 
 		} else if ( string == "--ICMP" ) {
 			std::cerr << "ICMP is not yet implemented.";
-			mFamily = AF_INET6;
+			mFamily = AF_PACKET;
+			mSocketType = SOCK_RAW;
+
+		} else if ( string == "--UDP" ) {
+			mSocketType = SOCK_DGRAM;
 
 		} else if ( string.StartsWith("--verbose=min") ) {
 			mVerboseLevel = eMinimalVerbosity;
@@ -566,6 +678,10 @@ void ProcessCommandLineArgs(char **args) {
 			exit(0);
 
 		} else {
+			if ( string.StartsWith("--") ) {
+				std::cerr << "Don't know what to do with \"" << string << "\"" << std::endl;
+				abort();
+			}
 			mHostnames.push_back(string);
 		}
 	}
@@ -588,7 +704,7 @@ std::vector<AddressInfo> CollectHosts(std::vector<String> hostnames) {
 	struct addrinfo addrinfo_hint = {
 		.ai_flags = (AI_V4MAPPED | AI_ADDRCONFIG | AI_CANONIDN),
 		.ai_family = mFamily,
-		.ai_socktype = SOCK_STREAM
+		.ai_socktype = mSocketType
 	};
 	struct addrinfo *addr_info;
 
@@ -603,7 +719,8 @@ std::vector<AddressInfo> CollectHosts(std::vector<String> hostnames) {
 					sockaddr_in *addr = (sockaddr_in*)(p->ai_addr);
 					char addr_txt[100];
 					inet_ntop(p->ai_family, &addr, addr_txt, p->ai_addrlen);
-					std::cerr << "Family: " << p->ai_family << " name: \"" << hostname << "\" address: " << addr_txt << std::endl;
+					// std::cerr << "Family: " << p->ai_family << " name: \"" << hostname << "\" address: " << addr_txt << std::endl;
+					std::cerr << "Family: " << p->ai_family << " name: \"" << hostname << std::endl;
 				}
 			}
 
@@ -646,7 +763,7 @@ int main(int cnt, char *args[]) {
 			for ( AddressInfo host : host_addrs ) {
 				PingService(&host);
 			}
-			usleep(mInterval);
+			usleep(mInterval * 1000);
 		} while ( mInterval > 0 );
 
 		std::cerr.flush();
