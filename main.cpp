@@ -22,354 +22,28 @@
 #include <iostream>
 #include <vector>
 
-#define TEST_EQUALS(expected, got) 	{ \
-								auto _expected = expected; \
-								auto _got = got; \
-								std::cout << "\t" << __FILE__ << "[" << __LINE__ << "] " << #expected << " " << #got << "..."; \
-								if ( _expected == _got ) { \
-									std::cout << "\x1B[32mPASSED.\x1B[0m\n"; \
-								} else { \
-									std::cout << "\x1B[31mFAILED. Expected \"" << _expected << "\" but got \"" << _got << "\"\x1B[0m" << std::endl; \
-								} \
-							}
-#define TEST_TRUE(test) 	{ \
-								auto _test = test; \
-								std::cout << "\t" << __FILE__ << "[" << __LINE__ << "]" << "..."; \
-								std::cout << "\x1B[32m" << (_test? "PASSED": "FAILED") << ".\x1B[0m" << std::endl; \
-							}
-#define TEST_FALSE(test) 	{ \
-								auto _test = test; \
-								std::cout << "\t" << __FILE__ << "[" << __LINE__ << "]" << "..."; \
-								std::cout << "\x1B[32m" << (!_test? "PASSED": "FAILED") << ".\x1B[0m" << std::endl; \
-							}
+#include "String.hpp"
+using namespace Tools;
 
-typedef unsigned int uint;
-
-class String {
-	char *text = nullptr;
-	uint length = 0;
-	public:
-		static constexpr char *EMPTY = const_cast<char*>("");
-
-	public:
-		String(const char *str = nullptr, uint start = 0, uint bytes = 0) {
-			if ( str != nullptr ) {
-				length = strlen(str);
-
-				if ( length == 0  ||  start >= length ) {
-					length = 0;
-					text = const_cast<char*>(EMPTY);
-
-				} else {
-					if ( start == 0  &&  bytes == 0 ) {
-	//NOOP				len = len;
-
-					} else if ( start == 0  &&  bytes > 0  &&  bytes < length ) {
-						length = bytes;
-
-					} else if ( start == 0  &&  bytes > 0  &&  bytes >= length ) {
-	//NOOP				len = len;
-
-					} else if ( start > 0  &&  bytes == 0 ) {
-						length -= start;
-
-					} else if ( start > 0  &&  bytes > 0  &&  bytes + start < length ) {
-						length = bytes;
-
-					} else if ( start > 0  &&  bytes > 0  &&  bytes + start >= length ) {
-						length -= start;
-					}
-
-					if ( length > 0 ) {
-						text = strncpy(new char[length + 1], str + start, length + 1);
-						text[length] = 0;
-					}
-				}
-
-			} else {
-				text = const_cast<char*>(EMPTY);
-			}
-		}
-		String(long long value) {
-			char tmps[25];
-			snprintf(tmps, sizeof(tmps), "%lld", value);
-			length = strlen(tmps);
-			text = new char[length + 1];
-			strncpy(text, tmps, length);
-		}
-		String(const String& string): length(string.length) {
-			text = (!string.IsEmpty()? strdup(string.text): const_cast<char*>(EMPTY));
-		}
-		virtual ~String(void) {
-			if ( *text != 0 ) {
-				delete [] text;
-				text = EMPTY; // <-- reset for double-free errors
-				length = 0;
-			}
-		}
-
-	public:
-		std::vector<String> Split(char c) {
-			std::vector<String> results;
-			uint head = 0, tail = 0;
-			while ( text[head] != 0  &&  head < length ) {
-				if ( text[head] == c ) {
-					results.push_back(String(text + tail, head - tail));
-					tail = head;
-				}
-				head++;
-			}
-			if ( tail < head ) {
-				results.push_back(String(text + tail, head - tail));
-			}
-			return results;
-		}
-
-	public:
-		String& operator=(const String& string) {
-			if ( text != EMPTY ) {
-				delete [] text;
-				text = EMPTY;
-				length = 0;
-			}
-			if ( string.IsEmpty() ) { // <-- If the param 'string' == EMPTY, clear *this
-				length = 0;
-				text = EMPTY;
-
-			} else {
-				text = strdup(string.text);
-				length = string.length;
-			}
-
-			return *this;
-		}
-		friend std::ostream& operator<<(std::ostream& stream, const String& string) {
-			return (stream << string.GetText());
-		}
-		bool operator==(const String& string) {
-			return (strcmp(text, string.text) == 0);
-		}
-		String operator+=(const String& string) {
-			if ( !string.IsEmpty() ) {
-				length += string.length;
-				char *tmps = new char[length + 1];
-				snprintf(tmps, length + 1, "%s%s", text, string.text);
-				if ( text != EMPTY ) {
-					delete [] text;
-				}
-				text = tmps;
-			}
-			return *this;
-		}
-
-	public:
-		bool StartsWith(const String& target) const {
-			const char *str = text;
-			const char *sub = target.text;
-			while ( *sub != 0  &&  *str == *sub ) {
-				str++, sub++;
-			}
-			return (*sub == 0);
-		}
-		bool IsEmpty(void) const {
-			return (*text == 0);
-		}
-		uint GetLength(void) const {
-			return length;
-		}
-		const char* GetText(void) const {
-			return text;
-		}
-};
-
-void unit_tests(void) {
-	// const char *str;
-	uint offset = 0u;
-	uint count = 0u;
-	static const char *test_str = "This is a test";
-
-	{	std::cout << "-----------------------------------String()-----------------------------------" << std::endl;
-		String string;
-		TEST_EQUALS(string.GetLength(), 0u);
-		TEST_EQUALS(String::EMPTY, string.GetText());
-	}
-
-	{	std::cout << "------------------------------String(const char*)-----------------------------" << std::endl;
-		String string(test_str);
-		TEST_EQUALS(string.GetLength(), strlen(test_str));
-		TEST_EQUALS(String(test_str), string);
-	}
-
-	{	std::cout << "-----------------------String(const char*, uint offset)-----------------------" << std::endl;
-		offset = 1u;
-		String string = String(test_str, offset);
-		TEST_EQUALS(string.GetLength(), strlen(test_str + offset));
-		TEST_EQUALS(String(test_str + offset), string);
-
-		offset = 10;
-		string = String(test_str, offset);
-		TEST_EQUALS(string.GetLength(), strlen(test_str + offset));
-		TEST_EQUALS(String(test_str + offset), string);
-
-		offset = 14u;
-		string = String(test_str, offset);
-		TEST_EQUALS(string.GetLength(), strlen(test_str + offset));
-		TEST_EQUALS(string, test_str + offset);
-
-		offset = 15u;
-		string = String(test_str, offset);
-		TEST_EQUALS(0u, string.GetLength());
-		TEST_EQUALS(String(""), string);
-	}
-
-	{	std::cout << "-----------------String(const char*, uint offset, uint count)-----------------" << std::endl;
-		offset = 1u;
-		count = 0u;
-		String string = String(test_str, offset, count);
-		TEST_EQUALS(strlen(test_str + offset), string.GetLength());
-		TEST_EQUALS(String("his is a test"), string);
-
-		count = 1u;
-		string = String(test_str, offset, count);
-		TEST_EQUALS(count, string.GetLength());
-		TEST_EQUALS(String("h"), string);
-
-		count = 5u;
-		string = String(test_str, offset, count);
-		TEST_EQUALS(count, string.GetLength());
-		TEST_EQUALS(String("his i"), string);
-
-		count = 13u;
-		string = String(test_str, offset, count);
-		TEST_EQUALS(count, string.GetLength());
-		TEST_EQUALS(String("his is a test"), string);
-
-		count = 14u;
-		string = String(test_str, offset, count);
-		TEST_EQUALS(count - offset, string.GetLength());
-		TEST_EQUALS(String("his is a test"), string);
-
-		count = 15u;
-		string = String(test_str, offset, count);
-		TEST_EQUALS(13u, string.GetLength());
-		TEST_EQUALS(String("his is a test"), string);
-	}
-
-	{ 	std::cout << "--------------------String operator+=(const String& string)-------------------" << std::endl;
-		String string = "abc";
-		string += "xyz";
-		TEST_EQUALS(String("abcxyz"), string);
-
-		string = "";
-		string += "xyz";
-		TEST_EQUALS(String("xyz"), string);
-
-		string = "abc";
-		string += "";
-		TEST_EQUALS(String("abc"), string);
-
-		string = "";
-		string += "";
-		TEST_EQUALS(String(""), string);
-	}
-
-	{ 	std::cout << "-------------------String& operator=(const String& string)--------------------" << std::endl;
-		String string("");
-		string = "test";
-		TEST_EQUALS(String("test"), string);
-		string = "";
-		TEST_EQUALS(String(""), string);
-	}
-
-	{ 	std::cout << "--------------------bool operator==(const String& string)---------------------" << std::endl;
-		TEST_EQUALS(String(), "");
-		TEST_EQUALS(String("abc"), "abc");
-	}
-
-	{	std::cout << "-----------------bool StartsWith(const String& target) const------------------" << std::endl;
-		String string;
-		TEST_TRUE(string.StartsWith(""));
-		TEST_FALSE(string.StartsWith("a"));
-		string = "";
-		TEST_TRUE(string.StartsWith(""));
-		string = "a";
-		TEST_TRUE(string.StartsWith(""));
-		TEST_TRUE(string.StartsWith("a"));
-		string = "aaaaabbbbb";
-		TEST_TRUE(string.StartsWith("aaaa"));
-		TEST_TRUE(string.StartsWith("aaaaab"));
-		TEST_FALSE(string.StartsWith("abaa"));
-	}
-
-	{ 	std::cout << "---------------------------bool IsEmpty(void) const---------------------------" << std::endl;
-		String string;
-		TEST_TRUE(string.IsEmpty());
-		string = "asd";
-		TEST_FALSE(string.IsEmpty());
-		string = "";
-		TEST_TRUE(string.IsEmpty());
-	}
-
-	{ 	std::cout << "--------------------------uint GetLength(void) const--------------------------" << std::endl;
-		String string;
-		TEST_EQUALS(string.GetLength(), 0u);
-		string = "asdf";
-		TEST_EQUALS(string.GetLength(), 4u);
-	}
-
-	{ 	std::cout << "-----------------------const char* GetText(void) const------------------------" << std::endl;
-		String string;
-		TEST_EQUALS(string.GetText(), "");
-		string = "123456";
-		TEST_EQUALS(String(string.GetText()), "123456");
-	}
-
-	{	std::cout << "----------------------std::vector<String> Split(char c)-----------------------" << std::endl;
-		String string("");
-		std::vector<String> strings = string.Split(' ');
-		TEST_EQUALS(strings.size(), 1u);
-		TEST_EQUALS(strings[0], "");
-
-		string = String("abc");
-		strings = string.Split(' ');
-		TEST_EQUALS(strings.size(), 1u);
-		TEST_EQUALS(strings[0], "abc");
-
-		string = String("abc ");
-		strings = string.Split(' ');
-		TEST_EQUALS(strings.size(), 2u);
-		TEST_EQUALS(strings[0], "abc");
-		TEST_EQUALS(strings[1], "");
-
-		string = String("abc def");
-		strings = string.Split(' ');
-		TEST_EQUALS(strings.size(), 2u);
-		TEST_EQUALS(strings[0], "abc");
-		TEST_EQUALS(strings[1], "def");
-
-		string = String("This is a test of the ");
-		strings = string.Split(' ');
-		TEST_EQUALS(strings.size(), 7u);
-		TEST_EQUALS(strings[0], "This");
-		TEST_EQUALS(strings[1], "is");
-		TEST_EQUALS(strings[2], "a");
-		TEST_EQUALS(strings[3], "test");
-		TEST_EQUALS(strings[4], "of");
-		TEST_EQUALS(strings[5], "the");
-		TEST_EQUALS(strings[6], "");
-	}
-}
+extern void unit_tests(void);
 
 enum VerboseLevel {
 	eNoVerbosity, eMinimalVerbosity, eMaximalVerbosity
 };
 
 /**********************************************************************************************
- * class HttpChannel
+ * class SocketStreamChannel
  * 		This class encapsulates the internet channel, supplying the I/O for the user.
  */
 class SocketStreamChannel {
 	int sd;
+
+	struct PingPacket {
+		uint16_t packet_num;
+		size_t   length;
+		uint16_t checksum;
+		char     buffer[];
+	};
 
 	public:
 		SocketStreamChannel(int sd): sd(sd) {}
@@ -387,6 +61,44 @@ class SocketStreamChannel {
 		}
 		void Send(const String& message, int flags = 0) {
 			send(sd, message.GetText(), message.GetLength(), flags);
+		}
+
+	public: //--- Tools
+		uint16_t Checksum(void *data, int len) {
+			uint16_t *buf = (uint16_t*)data, result;
+			uint32_t sum = 0;
+			for ( sum = 0; len > 1; len -= 2 ) {
+				sum += *buf++;
+			}
+			if ( len == 1 ) {
+				sum += *(uint8_t *)buf;
+			}
+			sum = (sum >> 16) + (sum & 0xFFFF);
+			sum += (sum >> 16);
+			result = -sum;
+			return result;
+		}
+
+	public:
+		void PingPong(struct sockaddr *addr, socklen_t addrlen) {
+			int sd = socket(AF_INET, SOCK_DGRAM, 0);
+			char msg[100];
+			char peer_addr[100];
+			socklen_t peer_addr_len;
+			do {
+				sendto(sd, "hi", 2, 0, addr, addrlen);
+				recvfrom(sd, msg, sizeof(msg), 0, (struct sockaddr*)(&peer_addr), &peer_addr_len);
+			} while (true);
+		}
+		void PongPing(struct sockaddr *addr, socklen_t addrlen) {
+			int sd = socket(AF_INET, SOCK_DGRAM, 0);
+			char msg[100];
+			char peer_addr[100];
+			socklen_t peer_addr_len;
+			do {
+				recvfrom(sd, msg, sizeof(msg), 0, (struct sockaddr*)(&peer_addr), &peer_addr_len);
+				sendto(sd, "lo", 2, 0, addr, addrlen);
+			} while (true);
 		}
 };
 
@@ -485,7 +197,6 @@ String GenerateHttpReport(std::vector<String>& report_log) {
 	http_reply += "<hr></body>\n</html>\n\n";
 	uint report_size = http_reply.GetLength() + 5;
 	tmps = reinterpret_cast<char*>(alloca(report_size));
-	// char tmps[report_size];
 	snprintf(tmps, report_size, http_reply.GetText(), report_size);
 	if ( mVerboseLevel > eMinimalVerbosity ) { std::cerr << "Reply: " << tmps; }
 	return tmps;
