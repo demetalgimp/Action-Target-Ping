@@ -16,7 +16,7 @@ namespace Tools {
             virtual ~String(void);
 
         public:
-            std::vector<String> Split(char c);
+            // std::vector<String> Split(char c);
 
         public:
             String& operator=(const String& string);
