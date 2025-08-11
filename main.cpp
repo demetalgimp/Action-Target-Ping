@@ -26,9 +26,25 @@
 using namespace Tools;
 
 extern void unit_tests(void);
+typedef unsigned char byte;
 
 enum VerboseLevel {
 	eNoVerbosity, eMinimalVerbosity, eMaximalVerbosity
+};
+
+static const char mClientHtmlPage[];
+static const char *SocketTypeNames[] = {
+	"(null)", "Stream", "Datagram", "Raw", "Sequenced, reliable, connection-based, datagrams",
+	"Sequenced, reliable, connection-based, datagrams", "Datagram Congestion Control", "(null)",
+	"(null)", "(null)", "Packet"
+};
+static const char *SocketFamilies[] = {
+	"Unspecified (0)", "Unix pipe (1)", "IPv4 (2)", "AX25 (3)", "IPX (4)", "Appletalk (5)", "NetRom (6)",
+	"Bridge (7)", "ATMPVC (8)", "X25 (9)", "IPv6", "ROSE (11)", "DECnet (12)", "NETBEUI (13)", "Security (14)",
+	"Key (15)", "Netlink (16)", "Packet (17)", "ASH (18)", "ECONET (19)", "ATMSVC (20)", "RDS (21)", "SNA (22)",
+	"IRDA (23)", "PPPOX (24)", "WanPipe (25)", "LLC (26)", "IB (27)", "MPLS (28)", "CAN (29)", "TIPC (30)",
+	"Bluetooth (31)", "IUCV (32)", "RXRPC (33)", "ISDN (34)", "PHONET (35)", "IEEE802154 (36)", "CAIF (37)",
+	"ALG (38)", "NFC (39)", "VSOCK (40)", "KCM (41)", "QIPCRTR (42)", "SMC (43)", "XDP (44)", "MCTP (45)"
 };
 
 /**********************************************************************************************
@@ -37,13 +53,6 @@ enum VerboseLevel {
  */
 class SocketStreamChannel {
 	int sd;
-
-	struct PingPacket {
-		uint16_t packet_num;
-		size_t   length;
-		uint16_t checksum;
-		char     buffer[];
-	};
 
 	public:
 		SocketStreamChannel(int sd): sd(sd) {}
@@ -64,7 +73,7 @@ class SocketStreamChannel {
 		}
 
 	public: //--- Tools
-		uint16_t Checksum(void *data, int len) {
+		static uint16_t Checksum(void *data, int len) {
 			uint16_t *buf = (uint16_t*)data, result;
 			uint32_t sum = 0;
 			for ( sum = 0; len > 1; len -= 2 ) {
@@ -80,25 +89,133 @@ class SocketStreamChannel {
 		}
 
 	public:
-		void PingPong(struct sockaddr *addr, socklen_t addrlen) {
+		enum PegboardState: byte { eUndefined, eSent, eReceived_okay, eReceived_fail}; // <-- force each element to be byte-size
+		struct PingPacket {
+			uint16_t packet_num;
+			size_t   packet_size;
+			time_t	 timestamp;
+			uint16_t checksum;
+			PegboardState state;
+			char     buffer[]; // <-- an old-C trick: you can actually leave the last element (which must be an array) without a size, making it possible to have a dynamically sized struct
+		};
+
+#define MAX_PEGBOARD 100
+
+/** void PingPong(struct sockaddr *addr, socklen_t addrlen, uint frequency_us = 100'000)
+ *		Send a datagram to a peer, await a reply, check message integrity.
+ *
+ * __GENERAL_ALGORITHM___
+ * 	* Create a thread which will:
+ * 		+ Listen for a message
+ * 		+ Check peer's report
+ * 		+ Verify integrity
+ * 		+ Check off pegboard
+ */
+		static void PingPong(struct sockaddr *addr, socklen_t addrlen, uint frequency_us = 100'000) {
+			static PegboardState pegboard[MAX_PEGBOARD];      	// <-- Track which packets have returned.
+			static uint passed = 0u, failed = 0u, lost = 0u;	// <-- Log passed/corrupted/lost packets.
+			static uint packet_num = 0u;						// <-- Internal packet number.
+
+		//--- Create a thread that will recv() each pong message and check it off (recv'ed, corrupted on [client|server] end)
+			pthread_t tid;
+			pthread_create(&tid, nullptr, [](void *) -> void* {
+					int sd = socket(AF_INET, SOCK_DGRAM, 0);
+					byte buffer[256];
+					PingPacket *packet = reinterpret_cast<PingPacket*>(buffer);
+
+					char peer_addr[100];		// <-- We honestly *do* know the max size (sizeof(IPv6)), but it's a good idea to assume not.
+					socklen_t peer_addr_len;	// <-- With the message, we get the "from" (or sender) address.
+					while (true) {
+						recvfrom(sd, buffer, sizeof(buffer), 0, (struct sockaddr*)(peer_addr), &peer_addr_len); // <-- Block on recv()
+						pegboard[packet->packet_num] = eReceived_fail;			// <-- Assume packet failed.
+
+					//--- Verify the packet integrity
+						if ( packet->state == eReceived_okay ) {
+							int packet_crc = packet->checksum;					// <-- Save the server's checksum.
+							packet->checksum = 0;								// <-- Zero it before doing the checksum.
+							if ( Checksum(packet, packet_crc) == packet_crc ) {	// <-- If checksums are equal... PASS!
+								passed++;										// <-- ...
+								pegboard[packet->packet_num] = eReceived_okay;	//		... PASSED!
+							} else {											// <-- If not, ...
+								failed++;										//		... FAIL!
+							}
+						} else {											// <-- If not,
+							failed++;										// 			... FAIL!
+						}
+
+//TODO: statistics: round trip time
+					}
+					return nullptr;
+				}, nullptr);
+			pthread_detach(tid);
+
+		//--- Create packet and send.
 			int sd = socket(AF_INET, SOCK_DGRAM, 0);
-			char msg[100];
-			char peer_addr[100];
-			socklen_t peer_addr_len;
 			do {
-				sendto(sd, "hi", 2, 0, addr, addrlen);
-				recvfrom(sd, msg, sizeof(msg), 0, (struct sockaddr*)(&peer_addr), &peer_addr_len);
+				byte buffer[256];
+				PingPacket *packet = reinterpret_cast<PingPacket*>(buffer);
+
+			//--- Initialize
+				packet->checksum = 0;
+				packet->packet_num = packet_num++;
+				packet->timestamp = time(nullptr);
+				packet->packet_size = 256;
+				packet->state = eSent;
+				pegboard[packet->packet_num] = eSent;
+
+			//--- Fill with garbage
+				for ( uint i = 0; i < sizeof(buffer) - sizeof(PingPacket); i++ ) {  // <-- a little old-C trick: since buffer[] was never given a size, its size is zero
+					packet->buffer[i] = random() % 257;
+				}
+
+			//--- Load the checksum and mark in the pegboard
+				packet->checksum = Checksum(packet, sizeof(buffer));
+				if ( packet_num++ == 0 ) {
+					memset(pegboard, eUndefined, sizeof(pegboard));
+				}
+
+			//--- Send
+				sendto(sd, buffer, sizeof(buffer), 0, addr, addrlen);
+				usleep(frequency_us);
 			} while (true);
 		}
-		void PongPing(struct sockaddr *addr, socklen_t addrlen) {
+
+/** void PongPing(struct sockaddr *addr, socklen_t addrlen, double loss_percent = 0.0, uint delay_ms = 0)
+ *		Receiving client to PingPong() peer.
+ *
+ * __GENERAL_ALGORITHM___
+ *		* Create a socket that the method will listen to
+ *		* Loop while...
+ *			+ wait for message
+ *			+ check message integrity
+ *			+ flag the message
+ *			+ echo message back
+ */
+		static void PongPing(struct sockaddr *addr, socklen_t addrlen, double loss_percent = 0.0, uint max_delay_ms = 0) {
 			int sd = socket(AF_INET, SOCK_DGRAM, 0);
-			char msg[100];
-			char peer_addr[100];
-			socklen_t peer_addr_len;
-			do {
-				recvfrom(sd, msg, sizeof(msg), 0, (struct sockaddr*)(&peer_addr), &peer_addr_len);
-				sendto(sd, "lo", 2, 0, addr, addrlen);
-			} while (true);
+			if ( sd > 0 ) {
+				char buffer[256];
+				socklen_t peer_addr_len;
+				PingPacket *packet = reinterpret_cast<PingPacket*>(buffer);
+
+			//--- Loop on getting and echoing back messages from peer
+				do {
+					char peer_addr[100];
+					uint bytes = recvfrom(sd, buffer, sizeof(buffer), 0, (struct sockaddr*)(&peer_addr), &peer_addr_len);
+					int packet_crc = packet->checksum;									// <-- save checksum field
+					packet->checksum = 0;												// <-- Clear checksum field
+					bool passed = (Checksum(packet, packet_crc) == packet_crc);			// <-- Verify...
+					passed = passed && (bytes == packet->packet_size);					//				integrity
+  					packet->state = (passed? eReceived_okay: eReceived_fail);			// <-- Report integrity
+					usleep(random() % max_delay_ms);									// <-- Simulate propagation time
+					sendto(sd, buffer, bytes, 0, (struct sockaddr*)(&peer_addr), peer_addr_len);
+				} while (true);
+
+			} else {
+				std::cerr << "!!!" << __FUNCTION__ << "[Line# " << __LINE__ << "]: Failed to create a datagram socket!" << std::endl;
+				abort();
+			}
+
 		}
 };
 
@@ -149,12 +266,12 @@ struct AddressInfo {
 		}
 	}
 	friend std::ostream& operator<<(std::ostream& stream, const AddressInfo& addrinfo) {
-		return (stream 	<< "\tname=" << addrinfo.canonname
-						<< " flags=" << addrinfo.flags
-						<< " family=" << addrinfo.family
-						<< " socktype=" << addrinfo.socktype
-						<< " protocol=" << addrinfo.protocol
-						<< " ip address=" << addrinfo.address);
+		return (stream 	<< "\tName=" << addrinfo.canonname << " "
+						<< "Flags=\"" << addrinfo.flags << "\" "
+						<< "Family=\"" << SocketFamilies[addrinfo.family] << "\" "
+						<< "Socktype=\"" << SocketTypeNames[addrinfo.socktype] << "\" "
+						<< "Protocol=\"" << getprotobynumber(addrinfo.protocol)->p_name << "\" "
+						<< "IP-address=\"" << addrinfo.address) << "\"";
 	}
 };
 
@@ -228,11 +345,6 @@ void *ReportServlet(void *arg) {
  * 			> the setsockopt ensures that if the program fails, the port is not tied up for upto 5 minutes.
  * 			> when a connection is established, the servlet thread is started.
  */
-const char *SocketTypeNames[] = {
-	"(null)", "Stream", "Datagram", "Raw", "Sequenced, reliable, connection-based, datagrams",
-	"Sequenced, reliable, connection-based, datagrams", "Datagram Congestion Control", "(null)",
-	"(null)", "(null)", "Packet"
-};
 
 bool run = true;
 void* ReportDispatchServer(void*) {
@@ -410,12 +522,12 @@ void ProcessCommandLineArgs(char **args) {
  * @param std::vector<String> hostnames - a list of names collected from the command line.
  * @return std::vector<AddressInfo> - a list of modified struct addrinfo.
  */
-std::vector<AddressInfo> CollectHosts(std::vector<String> hostnames) {
+std::vector<AddressInfo> CollectHosts(std::vector<String> hostnames, int inet_family, int socket_type) {
 	std::vector<AddressInfo> host_addrs;
 	struct addrinfo addrinfo_hint = {
 		.ai_flags = (AI_V4MAPPED | AI_ADDRCONFIG | AI_CANONIDN),
-		.ai_family = mFamily,
-		.ai_socktype = mSocketType
+		.ai_family = inet_family,
+		.ai_socktype = socket_type
 	};
 	struct addrinfo *addr_info;
 
@@ -464,13 +576,13 @@ int main(int cnt, char *args[]) {
 	pthread_detach(tid);
 
 //--- Collect hosts' addresses
-	std::vector<AddressInfo> host_addrs = CollectHosts(mHostnames);
+	std::vector<AddressInfo> host_addrs = CollectHosts(mHostnames, mFamily, mSocketType);
 
 //--- Run ping tests
 	if ( host_addrs.size() > 0 ) {
 
 		do {
-			std::cerr << "Connecting to... " << std::endl;
+			if ( mVerboseLevel > eNoVerbosity ) { std::cerr << "Connecting to... " << std::endl; }
 			for ( AddressInfo host : host_addrs ) {
 				PingService(&host);
 			}
@@ -538,3 +650,86 @@ void RawSocket(struct addrinfo *host) {
 	}
 }
 */
+
+const char mClientHtmlPage[] =
+	"<!DOCTYPE html>\n"
+	"<html lang=\"en\">\n"
+	"<head>\n"
+	"    <meta charset=\"UTF-8\">\n"
+	"    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n"
+	"    <title>WebSocket Message Collector</title>\n"
+	"    <style>\n"
+	"        body { font-family: Arial, sans-serif; margin: 20px; }\n"
+	"        #messages { border: 1px solid #ccc; padding: 10px; min-height: 200px; overflow-y: scroll; margin-bottom: 10px; }\n"
+	"        .message { margin-bottom: 5px; padding: 5px; background-color: #f0f0f0; border-radius: 3px; }\n"
+	"    </style>\n"
+	"</head>\n"
+	"<body>\n"
+	"    <h1>WebSocket Message Collector</h1>\n"
+	"    <div id=\"messages\"></div>\n"
+	"    <input type=\"text\" id=\"messageInput\" placeholder=\"Type your message...\">\n"
+	"    <button id=\"sendButton\">Send</button>\n"
+	"\n"
+	"    <script>\n"
+	"        const messagesDiv = document.getElementById('messages');\n"
+	"        const messageInput = document.getElementById('messageInput');\n"
+	"        const sendButton = document.getElementById('sendButton');\n"
+	"\n"
+	"        // Establish WebSocket connection\n"
+	"        const socket = new WebSocket('ws://localhost:8080'); // Replace with your server address\n"
+	"\n"
+	"        // Event listener for when the connection is opened\n"
+	"        socket.onopen = (event) => {\n"
+	"            console.log('WebSocket connection opened:', event);\n"
+	"            addMessage('System: Connected to WebSocket server.');\n"
+	"        };\n"
+	"\n"
+	"        // Event listener for incoming messages\n"
+	"        socket.onmessage = (event) => {\n"
+	"            console.log('Message received:', event.data);\n"
+	"            addMessage(`Server: ${event.data}`);\n"
+	"        };\n"
+	"\n"
+	"        // Event listener for connection errors\n"
+	"        socket.onerror = (error) => {\n"
+	"            console.error('WebSocket error:', error);\n"
+	"            addMessage('System: WebSocket error occurred.');\n"
+	"        };\n"
+	"\n"
+	"        // Event listener for when the connection is closed\n"
+	"        socket.onclose = (event) => {\n"
+	"            console.log('WebSocket connection closed:', event);\n"
+	"            addMessage('System: Disconnected from WebSocket server.');\n"
+	"        };\n"
+	"\n"
+	"        // Function to add messages to the display\n"
+	"        function addMessage(text) {\n"
+	"            const messageElement = document.createElement('div');\n"
+	"            messageElement.classList.add('message');\n"
+	"            messageElement.textContent = text;\n"
+	"            messagesDiv.appendChild(messageElement);\n"
+	"            messagesDiv.scrollTop = messagesDiv.scrollHeight; // Auto-scroll to bottom\n"
+	"        }\n"
+	"\n"
+	"        // Event listener for sending messages\n"
+	"        sendButton.addEventListener('click', () => {\n"
+	"            sendMessage();\n"
+	"        });\n"
+	"\n"
+	"        messageInput.addEventListener('keypress', (event) => {\n"
+	"            if (event.key === 'Enter') {\n"
+	"                sendMessage();\n"
+	"            }\n"
+	"        });\n"
+	"\n"
+	"        function sendMessage() {\n"
+	"            const message = messageInput.value;\n"
+	"            if (message.trim() !== '') {\n"
+	"                socket.send(message);\n"
+	"                addMessage(`You: ${message}`);\n"
+	"                messageInput.value = ''; // Clear input field\n"
+	"            }\n"
+	"        }\n"
+	"    </script>\n"
+	"</body>\n"
+	"</html>\n";

@@ -57,21 +57,21 @@ namespace Tools {
 			length = 0;
 		}
 	}
-	std::vector<String> String::Split(char c) {
-		std::vector<String> results;
-		uint head = 0, tail = 0;
-		while ( text[head] != 0  &&  head < length ) {
-			if ( text[head] == c ) {
-				results.push_back(String(text + tail, head - tail));
-				tail = head;
-			}
-			head++;
-		}
-		if ( tail < head ) {
-			results.push_back(String(text + tail, head - tail));
-		}
-		return results;
-	}
+	// std::vector<String> String::Split(char c) {
+	// 	std::vector<String> results;
+	// 	uint head = 0, tail = 0;
+	// 	while ( text[head] != 0  &&  head < length ) {
+	// 		if ( text[head] == c ) {
+	// 			results.push_back(String(text + tail, head - tail));
+	// 			tail = head;
+	// 		}
+	// 		head++;
+	// 	}
+	// 	if ( tail < head ) {
+	// 		results.push_back(String(text + tail, head - tail));
+	// 	}
+	// 	return results;
+	// }
 	String& String::operator=(const String& string) {
 		if ( text != EMPTY ) {
 			delete [] text;
