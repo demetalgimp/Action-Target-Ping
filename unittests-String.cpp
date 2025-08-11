@@ -119,6 +119,31 @@ void unit_tests(void) {
 		TEST_EQUALS(test_string, String("his is a test"));
 	}
 
+	{ 	std::cout << "---------------------------String(long long value)----------------------------" << std::endl;
+		String string(0LL);
+		TEST_EQUALS(string, "0");
+		string = String(1LL);
+		TEST_EQUALS(string, "1");
+		string = String(10LL);
+		TEST_EQUALS(string, "10");
+		string = String(100LL);
+		TEST_EQUALS(string, "100");
+		string = String(10'000'000LL);
+		TEST_EQUALS(string, "10000000");
+		string = String(-10'000'000'000LL);
+		TEST_EQUALS(string, "-10000000000");
+	}
+
+	{	std::cout << "-------------------------String(const String& string)-------------------------" << std::endl;
+		String string;
+		string = "";
+		TEST_EQUALS(String(string), "");
+		string = "a";
+		TEST_EQUALS(String(string), "a");
+		string = "sdljhro;igre;ovinwez;oismdzl;fvns";
+		TEST_EQUALS(String(string), "sdljhro;igre;ovinwez;oismdzl;fvns");
+	}
+
 	{ 	std::cout << "--------------------String operator+=(const String& string)-------------------" << std::endl;
 		String test_string = "abc";
 		test_string += "xyz";
@@ -135,6 +160,25 @@ void unit_tests(void) {
 		test_string = "";
 		test_string += "";
 		TEST_EQUALS(test_string, String(""));
+	}
+
+	{ 	std::cout << "--------------------String operator+(const String& string)--------------------" << std::endl;
+		String test_string;
+		TEST_EQUALS(test_string + test_string, "");
+		test_string = "abc";
+		TEST_EQUALS(test_string + "", "abc");
+		TEST_EQUALS(test_string + test_string, "abcabc");
+		test_string = "";
+		TEST_EQUALS(test_string + "abc", "abc");
+	}
+
+	{	std::cout << "--------friend String operator+(const char *str, const String& string)--------" << std::endl;
+		String test_string;
+		TEST_EQUALS("" + test_string, "");
+		TEST_EQUALS("abc" + test_string, "abc");
+		test_string = "def";
+		TEST_EQUALS("" + test_string, "def");
+		TEST_EQUALS("abc" + test_string, "abcdef");
 	}
 
 	{ 	std::cout << "-------------------String& operator=(const String& string)--------------------" << std::endl;
@@ -188,38 +232,38 @@ void unit_tests(void) {
 		TEST_EQUALS(String(test_string.GetText()), "123456");
 	}
 
-	// {	std::cout << "----------------------std::vector<String> Split(char c)-----------------------" << std::endl;
-	// 	String test_string("");
-	// 	std::vector<String> test_strings = test_string.Split(' ');
-	// 	TEST_EQUALS(test_strings.size(), 1u);
-	// 	TEST_EQUALS(test_strings[0], "");
+	{	std::cout << "----------------------std::vector<String> Split(char c)-----------------------" << std::endl;
+		String test_string("");
+		std::vector<String> test_strings = test_string.Split(' ');
+		TEST_EQUALS(test_strings.size(), 1u);
+		TEST_EQUALS(test_strings[0], "");
 
-	// 	test_string = String("abc");
-	// 	test_strings = test_string.Split(' ');
-	// 	TEST_EQUALS(test_strings.size(), 1u);
-	// 	TEST_EQUALS(test_strings[0], "abc");
+		test_string = String("abc");
+		test_strings = test_string.Split(' ');
+		TEST_EQUALS(test_strings.size(), 1u);
+		TEST_EQUALS(test_strings[0], "abc");
 
-	// 	test_string = String("abc ");
-	// 	test_strings = test_string.Split(' ');
-	// 	TEST_EQUALS(test_strings.size(), 2u);
-	// 	TEST_EQUALS(test_strings[0], "abc");
-	// 	TEST_EQUALS(test_strings[1], "");
+		test_string = String("abc ");
+		test_strings = test_string.Split(' ');
+		TEST_EQUALS(test_strings.size(), 2u);
+		TEST_EQUALS(test_strings[0], "abc");
+		TEST_EQUALS(test_strings[1], "");
 
-	// 	test_string = String("abc def");
-	// 	test_strings = test_string.Split(' ');
-	// 	TEST_EQUALS(test_strings.size(), 2u);
-	// 	TEST_EQUALS(test_strings[0], "abc");
-	// 	TEST_EQUALS(test_strings[1], "def");
+		test_string = String("abc def");
+		test_strings = test_string.Split(' ');
+		TEST_EQUALS(test_strings.size(), 2u);
+		TEST_EQUALS(test_strings[0], "abc");
+		TEST_EQUALS(test_strings[1], "def");
 
-	// 	test_string = String("This is a test of the ");
-	// 	test_strings = test_string.Split(' ');
-	// 	TEST_EQUALS(test_strings.size(), 7u);
-	// 	TEST_EQUALS(test_strings[0], "This");
-	// 	TEST_EQUALS(test_strings[1], "is");
-	// 	TEST_EQUALS(test_strings[2], "a");
-	// 	TEST_EQUALS(test_strings[3], "test");
-	// 	TEST_EQUALS(test_strings[4], "of");
-	// 	TEST_EQUALS(test_strings[5], "the");
-	// 	TEST_EQUALS(test_strings[6], "");
-	// }
+		test_string = String("This is a test of the ");
+		test_strings = test_string.Split(' ');
+		TEST_EQUALS(test_strings.size(), 7u);
+		TEST_EQUALS(test_strings[0], "This");
+		TEST_EQUALS(test_strings[1], "is");
+		TEST_EQUALS(test_strings[2], "a");
+		TEST_EQUALS(test_strings[3], "test");
+		TEST_EQUALS(test_strings[4], "of");
+		TEST_EQUALS(test_strings[5], "the");
+		TEST_EQUALS(test_strings[6], "");
+	}
 }
