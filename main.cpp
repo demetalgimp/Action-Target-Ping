@@ -32,20 +32,9 @@ enum VerboseLevel {
 	eNoVerbosity, eMinimalVerbosity, eMaximalVerbosity
 };
 
-static const char mClientHtmlPage[];
-static const char *SocketTypeNames[] = {
-	"(null)", "Stream", "Datagram", "Raw", "Sequenced, reliable, connection-based, datagrams",
-	"Sequenced, reliable, connection-based, datagrams", "Datagram Congestion Control", "(null)",
-	"(null)", "(null)", "Packet"
-};
-static const char *SocketFamilies[] = {
-	"Unspecified (0)", "Unix pipe (1)", "IPv4 (2)", "AX25 (3)", "IPX (4)", "Appletalk (5)", "NetRom (6)",
-	"Bridge (7)", "ATMPVC (8)", "X25 (9)", "IPv6", "ROSE (11)", "DECnet (12)", "NETBEUI (13)", "Security (14)",
-	"Key (15)", "Netlink (16)", "Packet (17)", "ASH (18)", "ECONET (19)", "ATMSVC (20)", "RDS (21)", "SNA (22)",
-	"IRDA (23)", "PPPOX (24)", "WanPipe (25)", "LLC (26)", "IB (27)", "MPLS (28)", "CAN (29)", "TIPC (30)",
-	"Bluetooth (31)", "IUCV (32)", "RXRPC (33)", "ISDN (34)", "PHONET (35)", "IEEE802154 (36)", "CAIF (37)",
-	"ALG (38)", "NFC (39)", "VSOCK (40)", "KCM (41)", "QIPCRTR (42)", "SMC (43)", "XDP (44)", "MCTP (45)"
-};
+extern const char *mClientHtmlPage;
+extern const char *SocketTypeNames[];
+extern const char *SocketFamilies[];
 
 /**********************************************************************************************
  * class SocketStreamChannel
@@ -243,17 +232,14 @@ struct AddressInfo {
 			  address_len(info->ai_addrlen), canonname(hostname)
 	{
 		char tmps[100];
-		void *addr = info->ai_addr;
-		address = inet_ntop(family, addr, tmps, info->ai_addrlen);
+		void *ai_addr = info->ai_addr;
+		address = inet_ntop(family, ai_addr, tmps, info->ai_addrlen);
 
-		if ( family == AF_INET ) {//} == sizeof(struct sockaddr_in) ) {
+		if ( family == AF_INET ) {
 			addr_in4 = reinterpret_cast<struct sockaddr_in*>(memcpy(new sockaddr_in(), info->ai_addr, address_len));
-			// address = String(inet_ntoa(addr_in4->sin_addr));
-			// address = inet_ntop(family, (void*)(&reinterpret_cast<struct sockaddr_in*>(info->ai_addr)->sin_addr), tmps, info->ai_addrlen);
 
-		} else if ( family == AF_INET6 ) {//addrlen == sizeof(struct sockaddr_in6) ) {
+		} else if ( family == AF_INET6 ) {
 			addr_in6 = reinterpret_cast<struct sockaddr_in6*>(memcpy(new sockaddr_in6(), info->ai_addr, address_len));
-			// address = inet_ntop(family, (void*)(&reinterpret_cast<struct sockaddr_in6*>(info->ai_addr)->sin6_addr), tmps, info->ai_addrlen);
 
 		} else {
 			addr = reinterpret_cast<struct sockaddr*>(memcpy(new sockaddr(), info->ai_addr, address_len));
@@ -287,6 +273,8 @@ uint32_t mRuntime = 100; //seconds
 uint16_t mInterval = 0; // milliseconds
 std::vector<String> mHostnames;
 std::vector<String> mReportLog;
+bool mRun = true;
+bool mUDP_Client = true;
 
 /**********************************************************************************************
  * String GenerateHttpReport(std::vector<String>& report_log)
@@ -305,9 +293,10 @@ String GenerateHttpReport(std::vector<String>& report_log) {
 	http_reply += "Server: Lone Wolf\nContent-Length: %-8d\n";
 	http_reply += "Connection: keep-alive\nContent-Type: text/html;charset=ISO-8859-1\n";
 	http_reply += "\n";
-	http_reply += "<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 3.2 Final//EN\">\n<html><head>\n";
-	http_reply += "<meta http-equiv=\"refresh\" content=\"10\">\n";
-	http_reply += "<title>ActionTarget</title>\n</head>\n<body>";
+	// http_reply += "<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 3.2 Final//EN\">\n<html><head>\n";
+	// http_reply += "<meta http-equiv=\"refresh\" content=\"10\">\n";
+	// http_reply += "<title>ActionTarget</title>\n</head>\n<body>";
+	http_reply += mClientHtmlPage;
 	for ( String logline : report_log ) {
 		http_reply += logline;
 	}
@@ -345,30 +334,28 @@ void *ReportServlet(void *arg) {
  * 			> the setsockopt ensures that if the program fails, the port is not tied up for upto 5 minutes.
  * 			> when a connection is established, the servlet thread is started.
  */
-
-bool run = true;
 void* ReportDispatchServer(void*) {
 	int server_sd;
 	if ( (server_sd = socket(AF_INET, SOCK_STREAM, 0)) > 0 ) {
-fprintf(stderr, "!!!%s:%d\n", __FILE__, __LINE__);
+// fprintf(stderr, "!!!%s:%d\n", __FILE__, __LINE__);
 		socklen_t value = 1;
 		if ( setsockopt(server_sd, SOL_SOCKET, SO_REUSEPORT, &value, sizeof(value)) == 0 ) {   // <-- Ensure that the port is "unlocked."
-fprintf(stderr, "!!!%s:%d\n", __FILE__, __LINE__);
+// fprintf(stderr, "!!!%s:%d\n", __FILE__, __LINE__);
 
 			struct sockaddr_in addr = { .sin_family = AF_INET, .sin_port = htons(mServerPort) };
 			addr.sin_addr.s_addr = INADDR_ANY;
 			if ( bind(server_sd, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) == 0 ) {   // <-- Assign port
-fprintf(stderr, "!!!%s:%d Grabbed port #%d\n", __FILE__, __LINE__, mServerPort);
+// fprintf(stderr, "!!!%s:%d Grabbed port #%d\n", __FILE__, __LINE__, mServerPort);
 
 				if ( listen(server_sd, 5) == 0 ) {
-fprintf(stderr, "!!!%s:%d Listener\n", __FILE__, __LINE__);
+// fprintf(stderr, "!!!%s:%d Listener\n", __FILE__, __LINE__);
 					socklen_t client_addr_size;
 
-					while (run) {
-fprintf(stderr, "!!!%s:%d Accept()... wait for connection.\n", __FILE__, __LINE__);
+					while (mRun) {
+// fprintf(stderr, "!!!%s:%d Accept()... wait for connection.\n", __FILE__, __LINE__);
 						int client_sd = accept(server_sd, reinterpret_cast<struct sockaddr*>(&addr), &client_addr_size);
 
-fprintf(stderr, "!!!%s:%d Connected!\n", __FILE__, __LINE__);
+// fprintf(stderr, "!!!%s:%d Connected!\n", __FILE__, __LINE__);
 						if ( mVerboseLevel > eNoVerbosity ) { std::cerr << "Client connection: " << std::endl; }//FIXME: get reentrant address
 
 						pthread_t tid;
@@ -429,12 +416,7 @@ void *PingService(void *arg) {
 	//--- Report string
 		std::cerr << "\t" << host.canonname << (retries <= 0? " failure!": " success!") << "(" << (1000 - retries) * 100 << "ms)" << std::endl;
 		String log;
-		log += "\t";
-		log += host.canonname;
-		log += (retries <= 0? " failure!": " success!");
-		log += "(";
-		log += String((1000 - retries) * 1000);
-		log += "ms)\n";
+		log += "\t" + host.canonname + (retries <= 0? " failure!": " success!") + "(" + String((1000 - retries) * 1000) + "ms)\n";
 		mReportLog.push_back(log);
 
 	//--- Shutdown
@@ -474,8 +456,13 @@ void ProcessCommandLineArgs(char **args) {
 			mFamily = AF_PACKET;
 			mSocketType = SOCK_RAW;
 
-		} else if ( string == "--UDP" ) {
+		} else if ( string == "--UDP=client" ) {
 			mSocketType = SOCK_DGRAM;
+			mUDP_Client = true;
+
+		} else if ( string == "--UDP=server" ) {
+			mSocketType = SOCK_DGRAM;
+			mUDP_Client = false;
 
 		} else if ( string.StartsWith("--verbose=min") ) {
 			mVerboseLevel = eMinimalVerbosity;
@@ -518,6 +505,12 @@ void ProcessCommandLineArgs(char **args) {
  * 		preferred IP-to-text translator is inet_ntop(). I've been encountering
  * 		problems with it in this program; so, I switched back to inet_ntoa() which does
  * 		not support IPv6 addressing.
+ *
+ * BASIC ALGORITHM
+ * 		1) for every hostname
+ * 			a) look up name through getaddrinfo()
+ * 			b) display if verbose
+ * 			c) add to array
  *
  * @param std::vector<String> hostnames - a list of names collected from the command line.
  * @return std::vector<AddressInfo> - a list of modified struct addrinfo.
@@ -578,7 +571,8 @@ int main(int cnt, char *args[]) {
 //--- Collect hosts' addresses
 	std::vector<AddressInfo> host_addrs = CollectHosts(mHostnames, mFamily, mSocketType);
 
-//--- Run ping tests
+//TODO: insert UDP datagram here.
+//--- Run pings
 	if ( host_addrs.size() > 0 ) {
 
 		do {
@@ -593,7 +587,7 @@ int main(int cnt, char *args[]) {
 	}
 
 	sleep(mRuntime);
-	run = false;
+	mRun = false;
 }
 
 /* Graveyard
@@ -651,7 +645,20 @@ void RawSocket(struct addrinfo *host) {
 }
 */
 
-const char mClientHtmlPage[] =
+const char *SocketTypeNames[] = {
+	"(null)", "Stream", "Datagram", "Raw", "Sequenced, reliable, connection-based, datagrams",
+	"Sequenced, reliable, connection-based, datagrams", "Datagram Congestion Control", "(null)",
+	"(null)", "(null)", "Packet"
+};
+const char *SocketFamilies[] = {
+	"Unspecified (0)", "Unix pipe (1)", "IPv4 (2)", "AX25 (3)", "IPX (4)", "Appletalk (5)", "NetRom (6)",
+	"Bridge (7)", "ATMPVC (8)", "X25 (9)", "IPv6", "ROSE (11)", "DECnet (12)", "NETBEUI (13)", "Security (14)",
+	"Key (15)", "Netlink (16)", "Packet (17)", "ASH (18)", "ECONET (19)", "ATMSVC (20)", "RDS (21)", "SNA (22)",
+	"IRDA (23)", "PPPOX (24)", "WanPipe (25)", "LLC (26)", "IB (27)", "MPLS (28)", "CAN (29)", "TIPC (30)",
+	"Bluetooth (31)", "IUCV (32)", "RXRPC (33)", "ISDN (34)", "PHONET (35)", "IEEE802154 (36)", "CAIF (37)",
+	"ALG (38)", "NFC (39)", "VSOCK (40)", "KCM (41)", "QIPCRTR (42)", "SMC (43)", "XDP (44)", "MCTP (45)"
+};
+const char *mClientHtmlPage =
 	"<!DOCTYPE html>\n"
 	"<html lang=\"en\">\n"
 	"<head>\n"
@@ -730,6 +737,6 @@ const char mClientHtmlPage[] =
 	"                messageInput.value = ''; // Clear input field\n"
 	"            }\n"
 	"        }\n"
-	"    </script>\n"
-	"</body>\n"
-	"</html>\n";
+	"    </script>\n";
+	// "</body>\n"
+	// "</html>\n";
