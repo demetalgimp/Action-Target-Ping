@@ -8,6 +8,15 @@
 1) Type: "make all install"
 2) Restart systemd.
 
+*How to use*
+> From the program's help:
+> > [--verbose=[min|max]] [--runtime=[0-9]+] --port=[[-a-z0-9._/]+|[0-9]+] [--interval=[0-9]+] [--IPv4|--IPv6|--ICMP] [<hostname>|<hostip] [--run-tests]
+> Examples:
+> > Run only the webserver on port #65000: <pre>./bin/actiontarget_ping --http-port=65000</pre>
+> > Ping servers once with no verbosity, webserver on port #8080, ping port #80, ping protocol IPv4/TCP, runtime=10s, once: <pre>./bin/actiontarget_ping lwn.net 8.8.8.8</pre>
+> > Ping servers for 10s: <pre>./bin/actiontarget_ping --runtime=10 lwn.net 8.8.8.8</pre>
+> > Ping servers' port #8080: every 50ms<pre>./bin/actiontarget_ping lwn.net --interval=50 8.8.8.8 --port=8080</pre>
+> > Ping using TCP, webserver port #9000, IPv6: <pre>./bin/actiontarget_ping --IPv6 --runtime=10 --TCP lwn.net 8.8.8.8</pre>
 
 This project was an assignment from Action Target. *The requirements are:*
 * ☑ Write a program that runs on a linux system.
@@ -15,7 +24,7 @@ This project was an assignment from Action Target. *The requirements are:*
 * ☑ Ping each host often enough to detect if they are down or up.
 * ☑ Determine if a host is online or offline.
 * ☐ Keep track of and display relevant metrics (latency and packet loss, etc.).
-* ☐ The results should be displayed with real-time updates on a webpage.
+* ☐ The results should be displayed with real-time updates on a webpage. (Note: it _does_ autorefresh)
 
 The design entailed:
 * Using C++ as the basic workhorse.
