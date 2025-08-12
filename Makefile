@@ -1,6 +1,8 @@
 #Makefile
 # Created on: Aug 4, 2025
 #     Author: swalton
+#
+# * Copyright (c) 2025, IAS Publishing, LLC
 
 BIN_DIR=./bin
 CXXFLAGS=-std=c++14 -Wall -g3 -Wno-multichar

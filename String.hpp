@@ -1,3 +1,11 @@
+/**
+ * String.hpp
+ *
+ *  Created on: Aug 11, 2025
+ *      Author: swalton
+ *
+ * Copyright (c) 2025, IAS Publishing, LLC
+ */
 #ifndef STRING_HPP
 #define STRING_HPP
 

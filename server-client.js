@@ -1,4 +1,15 @@
+/**
+ * server-client.js
+ *
+ *  Created on: Aug 4, 2025
+ *      Author: swalton
+ *
+ * Copyright (c) 2025, IAS Publishing, LLC
+ */
 
+/////////////////////////////////////////////////////////// NOTES ///////////////////////////////////////////////////////////
+
+//================================ Server ================================
 server.on("connection",
 	(socket) => {
 		socket.on("data",
@@ -9,7 +20,7 @@ server.on("connection",
 	}
 );
 
-#---Filter service
+//---Filter service
 const net = require("net");
 
 client = net.createConnection({ host: "127.0.0.1", port: 8080 });
@@ -20,7 +31,7 @@ client.on("data",
 );
 client.write("request");
 
-#================================ Client ================================
+//================================ Client ================================
 const WebSocket = require("ws");
 
 let socket = new WebSocket("wss://127.0.0.1/article/websocket/demo/hello");
