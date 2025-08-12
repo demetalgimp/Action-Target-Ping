@@ -3,6 +3,8 @@
  *
  *  Created on: Aug 4, 2025
  *      Author: swalton
+ *
+ * Copyright (c) 2025, IAS Publishing, LLC
  */
 #include <stdlib.h>
 #include <stdio.h>
@@ -22,6 +24,9 @@
 #include <iostream>
 #include <vector>
 
+#define MAX_PEGBOARD 100
+#define VERBOSE(tier, cmd) if (mVerboseLevel > tier) {cmd};
+
 #include "String.hpp"
 using namespace Tools;
 
@@ -33,8 +38,79 @@ enum VerboseLevel {
 };
 
 extern const char *mClientHtmlPage;
-extern const char *SocketTypeNames[];
-extern const char *SocketFamilies[];
+extern const char *mSocketTypeNames[];
+extern const char *mSocketFamilyNames[];
+pthread_t tid;
+pthread_attr_t mThreadAttributes;
+
+/**********************************************************************************************
+ * Global variables for program state.
+ */
+VerboseLevel mVerboseLevel = eNoVerbosity;
+uint16_t mServerPort = 8080;
+String mServent = "80";
+int mFamily = AF_UNSPEC;
+int mSocketType = SOCK_STREAM;
+int mRuntime = 10; //seconds
+uint16_t mInterval = 0; // milliseconds
+pthread_mutex_t mReportLog_mutex = PTHREAD_RECURSIVE_MUTEX_INITIALIZER_NP;
+bool mRun = true;
+bool mUDP_Client = true;
+std::vector<String> mHostnames;
+std::vector<String> mReportLog;
+
+/**********************************************************************************************
+ * struct AddressInfo
+ * 		This "public" class abstracts the data from getaddrinfo() -- the preferred method
+ * 		for hostname resolution
+ */
+struct AddressInfo {
+	int flags;
+	int family;
+	int socktype;
+	int protocol;
+	socklen_t address_len;
+	union {
+		struct sockaddr* addr;
+		struct sockaddr_in* addr_in4;
+		struct sockaddr_in6* addr_in6;
+	};
+	String canonname;
+	String address;
+
+	AddressInfo(addrinfo *info, const String& hostname)
+			: flags(info->ai_flags), family(info->ai_family), socktype(info->ai_socktype), protocol(info->ai_protocol),
+			  address_len(info->ai_addrlen), canonname(hostname)
+	{
+		char tmps[100];
+		void *ai_addr = info->ai_addr;
+		address = inet_ntop(family, ai_addr, tmps, info->ai_addrlen);
+
+		if ( family == AF_INET ) {
+			addr_in4 = reinterpret_cast<struct sockaddr_in*>(memcpy(new sockaddr_in(), info->ai_addr, address_len));
+
+		} else if ( family == AF_INET6 ) {
+			addr_in6 = reinterpret_cast<struct sockaddr_in6*>(memcpy(new sockaddr_in6(), info->ai_addr, address_len));
+
+		} else {
+			addr = reinterpret_cast<struct sockaddr*>(memcpy(new sockaddr(), info->ai_addr, address_len));
+		}
+	}
+	virtual ~AddressInfo(void) {
+		if ( addr != nullptr ) {
+			// delete addr;
+			addr = nullptr;
+		}
+	}
+	friend std::ostream& operator<<(std::ostream& stream, const AddressInfo& addrinfo) {
+		return (stream 	<< "\tName=" << addrinfo.canonname << " "
+						<< "Flags=\"" << addrinfo.flags << "\" "
+						<< "Family=\"" << mSocketFamilyNames[addrinfo.family] << "\" "
+						<< "Socktype=\"" << mSocketTypeNames[addrinfo.socktype] << "\" "
+						<< "Protocol=\"" << getprotobynumber(addrinfo.protocol)->p_name << "\" "
+						<< "IP-address=\"" << addrinfo.address) << "\"";
+	}
+};
 
 /**********************************************************************************************
  * class SocketStreamChannel
@@ -78,17 +154,68 @@ class SocketStreamChannel {
 		}
 
 	public:
-		enum PegboardState: byte { eUndefined, eSent, eReceived_okay, eReceived_fail}; // <-- force each element to be byte-size
+		enum PegboardState: byte { eUndefined, eSent, eReceived_okay, eReceived_fail }; // <-- force each element to be byte-size
 		struct PingPacket {
-			uint16_t packet_num;
-			size_t   packet_size;
-			time_t	 timestamp;
-			uint16_t checksum;
-			PegboardState state;
-			char     buffer[]; // <-- an old-C trick: you can actually leave the last element (which must be an array) without a size, making it possible to have a dynamically sized struct
+			uint16_t 		packet_num;
+			size_t   		packet_size;
+			time_t	 		timestamp;
+			uint16_t 		checksum;
+			PegboardState 	state;
+			char     		buffer[]; 	// <-- an old-C trick: you can actually leave the last element (which must be an
+										//		array) without a size, making it possible to have a dynamically sized struct.
 		};
 
-#define MAX_PEGBOARD 100
+/**********************************************************************************************
+ * std::vector<AddressInfo> CollectHosts(std::vector<String> hostnames)
+ *
+ * Purpose:
+ * 		Using getaddrinfo(), map each hostname (or ip address) to an IP. Note: The
+ * 		preferred IP-to-text translator is inet_ntop(). I've been encountering
+ * 		problems with it in this program; so, I switched back to inet_ntoa() which does
+ * 		not support IPv6 addressing.
+ *
+ * BASIC ALGORITHM
+ * 		1) for every hostname
+ * 			a) look up name through getaddrinfo()
+ * 			b) display if verbose
+ * 			c) add to array
+ *
+ * @param std::vector<String> hostnames - a list of names collected from the command line.
+ * @return std::vector<AddressInfo> - a list of modified struct addrinfo.
+ */
+		static std::vector<AddressInfo> CollectHosts(std::vector<String> hostnames, int inet_family, int socket_type) {
+			std::vector<AddressInfo> host_addrs;
+			struct addrinfo addrinfo_hint = {
+				.ai_flags = (AI_V4MAPPED | AI_ADDRCONFIG | AI_CANONIDN),
+				.ai_family = inet_family,
+				.ai_socktype = socket_type
+			};
+			struct addrinfo *addr_info;
+
+			for ( String hostname : hostnames ) {
+
+				int getaddrinfo_err = getaddrinfo(hostname.GetText(), mServent.GetText(), &addrinfo_hint, &addr_info);
+				if ( getaddrinfo_err == 0 ) {
+
+					VERBOSE(eNoVerbosity, {
+						for ( struct addrinfo *p = addr_info; p != nullptr; p = p->ai_next ) {
+							// sockaddr_in *addr = (sockaddr_in*)(p->ai_addr);
+							char addr_txt[100];
+							inet_ntop(p->ai_family, p->ai_addr, addr_txt, p->ai_addrlen);
+							std::cout << "Family: " << p->ai_family << " name: \"" << hostname << "\" address: " << addr_txt << std::endl;
+							std::cout << "Family: " << p->ai_family << " name: \"" << hostname << std::endl;
+						}
+					});
+
+					host_addrs.push_back(AddressInfo(addr_info, hostname));
+					freeaddrinfo(addr_info);
+
+				} else {
+					std::cout << "Failure: getaddrinfo(" << hostnames[0] << ", " << mServent << "): " << gai_strerror(getaddrinfo_err);
+				}
+			}
+			return host_addrs;
+		}
 
 /** void PingPong(struct sockaddr *addr, socklen_t addrlen, uint frequency_us = 100'000)
  *		Send a datagram to a peer, await a reply, check message integrity.
@@ -102,12 +229,12 @@ class SocketStreamChannel {
  */
 		static void PingPong(struct sockaddr *addr, socklen_t addrlen, uint frequency_us = 100'000) {
 			static PegboardState pegboard[MAX_PEGBOARD];      	// <-- Track which packets have returned.
-			static uint passed = 0u, failed = 0u, lost = 0u;	// <-- Log passed/corrupted/lost packets.
+			static uint passed = 0u, failed = 0u;//, lost = 0u;	// <-- Log passed/corrupted/lost packets.
 			static uint packet_num = 0u;						// <-- Internal packet number.
 
 		//--- Create a thread that will recv() each pong message and check it off (recv'ed, corrupted on [client|server] end)
-			pthread_t tid;
-			pthread_create(&tid, nullptr, [](void *) -> void* {
+			pthread_create(&tid, &mThreadAttributes,
+				[](void *) -> void* {
 					int sd = socket(AF_INET, SOCK_DGRAM, 0);
 					byte buffer[256];
 					PingPacket *packet = reinterpret_cast<PingPacket*>(buffer);
@@ -128,6 +255,7 @@ class SocketStreamChannel {
 							} else {											// <-- If not, ...
 								failed++;										//		... FAIL!
 							}
+
 						} else {											// <-- If not,
 							failed++;										// 			... FAIL!
 						}
@@ -135,8 +263,8 @@ class SocketStreamChannel {
 //TODO: statistics: round trip time
 					}
 					return nullptr;
-				}, nullptr);
-			pthread_detach(tid);
+				},
+				nullptr);
 
 		//--- Create packet and send.
 			int sd = socket(AF_INET, SOCK_DGRAM, 0);
@@ -201,80 +329,12 @@ class SocketStreamChannel {
 				} while (true);
 
 			} else {
-				std::cerr << "!!!" << __FUNCTION__ << "[Line# " << __LINE__ << "]: Failed to create a datagram socket!" << std::endl;
+				std::cout << "!!!" << __FUNCTION__ << "[Line# " << __LINE__ << "]: Failed to create a datagram socket!" << std::endl;
 				abort();
 			}
 
 		}
 };
-
-/**********************************************************************************************
- * struct AddressInfo
- * 		This "public" class abstracts the data from getaddrinfo() -- the preferred method
- * 		for hostname resolution
- */
-struct AddressInfo {
-	int flags;
-	int family;
-	int socktype;
-	int protocol;
-	socklen_t address_len;
-	union {
-		struct sockaddr* addr;
-		struct sockaddr_in* addr_in4;
-		struct sockaddr_in6* addr_in6;
-	};
-	String canonname;
-	String address;
-
-	AddressInfo(addrinfo *info, const String& hostname)
-			: flags(info->ai_flags), family(info->ai_family), socktype(info->ai_socktype), protocol(info->ai_protocol),
-			  address_len(info->ai_addrlen), canonname(hostname)
-	{
-		char tmps[100];
-		void *ai_addr = info->ai_addr;
-		address = inet_ntop(family, ai_addr, tmps, info->ai_addrlen);
-
-		if ( family == AF_INET ) {
-			addr_in4 = reinterpret_cast<struct sockaddr_in*>(memcpy(new sockaddr_in(), info->ai_addr, address_len));
-
-		} else if ( family == AF_INET6 ) {
-			addr_in6 = reinterpret_cast<struct sockaddr_in6*>(memcpy(new sockaddr_in6(), info->ai_addr, address_len));
-
-		} else {
-			addr = reinterpret_cast<struct sockaddr*>(memcpy(new sockaddr(), info->ai_addr, address_len));
-		}
-	}
-	virtual ~AddressInfo(void) {
-		if ( addr != nullptr ) {
-			// delete addr;
-			addr = nullptr;
-		}
-	}
-	friend std::ostream& operator<<(std::ostream& stream, const AddressInfo& addrinfo) {
-		return (stream 	<< "\tName=" << addrinfo.canonname << " "
-						<< "Flags=\"" << addrinfo.flags << "\" "
-						<< "Family=\"" << SocketFamilies[addrinfo.family] << "\" "
-						<< "Socktype=\"" << SocketTypeNames[addrinfo.socktype] << "\" "
-						<< "Protocol=\"" << getprotobynumber(addrinfo.protocol)->p_name << "\" "
-						<< "IP-address=\"" << addrinfo.address) << "\"";
-	}
-};
-
-/**********************************************************************************************
- * Global variables for program state.
- */
-VerboseLevel mVerboseLevel = eNoVerbosity;
-uint16_t mServerPort = 8080;
-String mServent = "80";
-int mFamily = AF_UNSPEC;
-int mSocketType = SOCK_STREAM;
-uint32_t mRuntime = 100; //seconds
-uint16_t mInterval = 0; // milliseconds
-std::vector<String> mHostnames;
-std::vector<String> mReportLog;
-bool mRun = true;
-bool mUDP_Client = true;
 
 /**********************************************************************************************
  * String GenerateHttpReport(std::vector<String>& report_log)
@@ -283,28 +343,29 @@ bool mUDP_Client = true;
  * 		This method generates the server-ping log page.
  */
 String GenerateHttpReport(std::vector<String>& report_log) {
+	const uint BYTES = 100;
 	FILE *pp = popen("date", "r");
-	char *tmps = reinterpret_cast<char*>(alloca(100));
-	fgets(tmps, sizeof(tmps), pp);
+	char *tmps = reinterpret_cast<char*>(alloca(BYTES));
+	fgets(tmps, sizeof(BYTES), pp);
 	pclose(pp);
 	String date_str(tmps);
-	String http_reply("HTTP/1.1 200 OK\nDate:");
-	http_reply += date_str;
-	http_reply += "Server: Lone Wolf\nContent-Length: %-8d\n";
-	http_reply += "Connection: keep-alive\nContent-Type: text/html;charset=ISO-8859-1\n";
+	String http_reply;
+	http_reply = "HTTP/1.1 200 OK\n";
+	http_reply += "Date: " + date_str;
+	http_reply += "Server: Lone Wolf\n";
+	http_reply += "Content-Length: %-8d\n";
+	http_reply += "Connection: keep-alive\n";
+	http_reply += "Content-Type: text/html;charset=ISO-8859-1\n";
 	http_reply += "\n";
-	// http_reply += "<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 3.2 Final//EN\">\n<html><head>\n";
-	// http_reply += "<meta http-equiv=\"refresh\" content=\"10\">\n";
-	// http_reply += "<title>ActionTarget</title>\n</head>\n<body>";
 	http_reply += mClientHtmlPage;
 	for ( String logline : report_log ) {
-		http_reply += logline;
+		http_reply += logline + "<br>";
 	}
 	http_reply += "<hr></body>\n</html>\n\n";
 	uint report_size = http_reply.GetLength() + 5;
 	tmps = reinterpret_cast<char*>(alloca(report_size));
 	snprintf(tmps, report_size, http_reply.GetText(), report_size);
-	if ( mVerboseLevel > eMinimalVerbosity ) { std::cerr << "Reply: " << tmps; }
+	VERBOSE(eMinimalVerbosity, { std::cout << "Reply: " << tmps; });
 	return tmps;
 }
 
@@ -317,7 +378,7 @@ String GenerateHttpReport(std::vector<String>& report_log) {
 void *ReportServlet(void *arg) {
 	SocketStreamChannel *channel = reinterpret_cast<SocketStreamChannel*>(arg);
 	String request = channel->Receive();
-	if ( mVerboseLevel > eMinimalVerbosity ) { std::cerr << "Request: " << request; }
+	VERBOSE(eMinimalVerbosity, { std::cout << "Request: " << request; });
 
 	channel->Send(GenerateHttpReport(mReportLog));
 	sleep(1); // <-- needed to get the data out to the client; else, the stream will be dumped.
@@ -337,30 +398,22 @@ void *ReportServlet(void *arg) {
 void* ReportDispatchServer(void*) {
 	int server_sd;
 	if ( (server_sd = socket(AF_INET, SOCK_STREAM, 0)) > 0 ) {
-// fprintf(stderr, "!!!%s:%d\n", __FILE__, __LINE__);
 		socklen_t value = 1;
 		if ( setsockopt(server_sd, SOL_SOCKET, SO_REUSEPORT, &value, sizeof(value)) == 0 ) {   // <-- Ensure that the port is "unlocked."
-// fprintf(stderr, "!!!%s:%d\n", __FILE__, __LINE__);
 
 			struct sockaddr_in addr = { .sin_family = AF_INET, .sin_port = htons(mServerPort) };
 			addr.sin_addr.s_addr = INADDR_ANY;
 			if ( bind(server_sd, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) == 0 ) {   // <-- Assign port
-// fprintf(stderr, "!!!%s:%d Grabbed port #%d\n", __FILE__, __LINE__, mServerPort);
 
 				if ( listen(server_sd, 5) == 0 ) {
-// fprintf(stderr, "!!!%s:%d Listener\n", __FILE__, __LINE__);
 					socklen_t client_addr_size;
 
 					while (mRun) {
-// fprintf(stderr, "!!!%s:%d Accept()... wait for connection.\n", __FILE__, __LINE__);
 						int client_sd = accept(server_sd, reinterpret_cast<struct sockaddr*>(&addr), &client_addr_size);
 
-// fprintf(stderr, "!!!%s:%d Connected!\n", __FILE__, __LINE__);
-						if ( mVerboseLevel > eNoVerbosity ) { std::cerr << "Client connection: " << std::endl; }//FIXME: get reentrant address
+						VERBOSE(eNoVerbosity, { std::cout << "Client connection: " << std::endl; });//FIXME: get reentrant address
 
-						pthread_t tid;
-						pthread_create(&tid, nullptr, ReportServlet, new SocketStreamChannel(client_sd));
-						pthread_detach(tid);
+						pthread_create(&tid, &mThreadAttributes, ReportServlet, new SocketStreamChannel(client_sd));
 					}
 
 				} else {
@@ -382,64 +435,76 @@ void* ReportDispatchServer(void*) {
 }
 
 /**********************************************************************************************
- * void *PingService(void *arg)
+ * void *PingService(void *arg) {Follows pthread's thread interface}
  * Purpose:
  * 		The thread
- * 			> accepts connection info of an external server,
- * 			> attempts to connect with it,
+ * 			> attempts to connect to external server,
  * 			> measures the time it takes in milliseconds,
  * 			> generates a report,
  * 			> then closes the connection.
  *
  * @param void *arg - generic reference to AddressInfo.
- * @returns *arg    - which is ignored.
+ * @returns host    - which is ignored.
  */
-void *PingService(void *arg) {
-	AddressInfo host = *reinterpret_cast<AddressInfo*>(arg);
+#define RETRIES 20
+void *PingService(AddressInfo *host) {
+	VERBOSE(eMinimalVerbosity, { std::cout << "Open socket (family=" << host->family << " socket-type=" << host->socktype << ")" << std::endl; });
 
-	if ( mVerboseLevel > eMinimalVerbosity ) {
-		std::cerr << "Open socket (family=" << host.family << " socket-type=" << host.socktype << ")" << std::endl;
-	}
-
-	int sd = socket(host.family, host.socktype, 0);
+//--- Create TCP/IP socket
+	int sd = socket(host->family, host->socktype, 0);
 	if ( sd > 0 ) {
-		if ( mVerboseLevel > eNoVerbosity ) {
-			std::cerr << host;
-		}
+		VERBOSE(eNoVerbosity, { std::cout << host; });
 
 	//--- Attempt connection
-		int retries = 1000;
-		while ( retries-- > 0  &&  connect(sd, host.addr, host.address_len) != 0  &&  errno == EAGAIN ) {
-			usleep(100);
+		std::cout << "Connecting to " << host->canonname << "... ";
+		int retries = RETRIES;
+		while ( --retries >= 0 ) {
+
+		//--- Attempt to connect
+			if ( connect(sd, host->addr, host->address_len) == 0 ) {
+
+			//--- Attempt to send() a few bytes... if error, then true connection failed.
+				std::cout << "verify " << host->canonname << "'s connection with simple send()";
+				if ( send(sd, "test", 4, 0) < 0 ) {
+					perror("send()");
+
+				} else {
+					break;
+				}
+			}
+			std::cout << ". ";
+			usleep(1000);
 		}
+		std::cout << std::endl;
 
 	//--- Report string
-		std::cerr << "\t" << host.canonname << (retries <= 0? " failure!": " success!") << "(" << (1000 - retries) * 100 << "ms)" << std::endl;
-		String log;
-		log += "\t" + host.canonname + (retries <= 0? " failure!": " success!") + "(" + String((1000 - retries) * 1000) + "ms)\n";
-		mReportLog.push_back(log);
+		String log_entry = "\t" + host->canonname + (retries <= 0? " failure!": " success! (" + String(RETRIES - retries) + "us)");
+		std::cout << log_entry << std::endl;
+		pthread_mutex_lock(&mReportLog_mutex);
+		mReportLog.push_back(log_entry);
+		pthread_mutex_unlock(&mReportLog_mutex);
 
 	//--- Shutdown
-		std::cerr.flush();
+		std::cout.flush();
 		shutdown(sd, SHUT_WR);
 		close(sd);
 
 	} else {
 		perror("socket()");
 	}
-	return arg;
+	return host;
 }
 
 /**********************************************************************************************
- * void ProcessCommandLineArgs(char **args)
+ * void ProcessCommandLine(char **args)
  *
  * Purpose:
  * 		This method processes the arguments passed in from the command line.
  *
  * @param char **args - the command line arguments.
  */
-void ProcessCommandLineArgs(char **args) {
-
+void ProcessCommandLine(char **args) {
+	const String appname(*args);
 	while ( *++args != nullptr ) {
 		String string(*args);
 		if ( string.StartsWith("--port=") ) {
@@ -452,7 +517,7 @@ void ProcessCommandLineArgs(char **args) {
 			mFamily = AF_INET6;
 
 		} else if ( string == "--ICMP" ) {
-			std::cerr << "ICMP is not yet implemented.";
+			std::cout << "ICMP is not yet implemented.";
 			mFamily = AF_PACKET;
 			mSocketType = SOCK_RAW;
 
@@ -463,6 +528,9 @@ void ProcessCommandLineArgs(char **args) {
 		} else if ( string == "--UDP=server" ) {
 			mSocketType = SOCK_DGRAM;
 			mUDP_Client = false;
+
+		} else if ( string.StartsWith("--verbose=none") ) {
+			mVerboseLevel = eNoVerbosity;
 
 		} else if ( string.StartsWith("--verbose=min") ) {
 			mVerboseLevel = eMinimalVerbosity;
@@ -479,75 +547,47 @@ void ProcessCommandLineArgs(char **args) {
 		} else if ( string.StartsWith("--interval=") ) {
 			mInterval = atoi(*args + strlen("--interval="));
 
-		} else if ( string == "--help" ) {
-			std::cerr << "[--verbose=[minimal|maximal]] [--runtime=[0-9]+] --port=[[-a-z0-9._/]+|[0-9]+] [--interval=[0-9]+] [--IPv4|--IPv6|--ICMP] [<hostname>|<hostip] [--run-tests]\n";
-			exit(0);
-
 		} else if ( string == "--run-tests") {
 			unit_tests();
 			exit(0);
 
+		} else if ( string == "--help" ) {
+			std::cout << appname <<
+					"\t[--port=[[-a-z0-9._/]+|[0-9]+]] - what port to ping (default=80/HTTP)" << std::endl <<
+					"\t[--IPv4|--IPv6] - use IPv4 or IPv6 (default=IPv4)" << std::endl <<
+					"\t[--UDP=[client|server] - {disabled}" << std::endl <<
+					"\t[--verbose=[min|max]] - what kind of verbosity (default=none)" << std::endl <<
+					"\t[--http-port=[0-9]+] - what is the HTTP port (default=8080)" << std::endl <<
+					"\t[--runtime=[0-9]+] - how long to run (default=10s)" << std::endl <<
+					"\t[--interval=[0-9]+] - how often to ping (default=0 {once})" << std::endl <<
+					"\t[--run-tests] - run unit tests" << std::endl <<
+					"\t[<hostname>|<hostip]" << std::endl;
+			exit(0);
+
 		} else {
 			if ( string.StartsWith("--") ) {
-				std::cerr << "Don't know what to do with \"" << string << "\"" << std::endl;
+				std::cout << "Don't know what to do with \"" << string << "\"" << std::endl;
 				abort();
 			}
 			mHostnames.push_back(string);
 		}
 	}
-}
 
-/**********************************************************************************************
- * std::vector<AddressInfo> CollectHosts(std::vector<String> hostnames)
- *
- * Purpose:
- * 		Using getaddrinfo(), map each hostname (or ip address) to an IP. Note: The
- * 		preferred IP-to-text translator is inet_ntop(). I've been encountering
- * 		problems with it in this program; so, I switched back to inet_ntoa() which does
- * 		not support IPv6 addressing.
- *
- * BASIC ALGORITHM
- * 		1) for every hostname
- * 			a) look up name through getaddrinfo()
- * 			b) display if verbose
- * 			c) add to array
- *
- * @param std::vector<String> hostnames - a list of names collected from the command line.
- * @return std::vector<AddressInfo> - a list of modified struct addrinfo.
- */
-std::vector<AddressInfo> CollectHosts(std::vector<String> hostnames, int inet_family, int socket_type) {
-	std::vector<AddressInfo> host_addrs;
-	struct addrinfo addrinfo_hint = {
-		.ai_flags = (AI_V4MAPPED | AI_ADDRCONFIG | AI_CANONIDN),
-		.ai_family = inet_family,
-		.ai_socktype = socket_type
-	};
-	struct addrinfo *addr_info;
-
-	for ( String hostname : hostnames ) {
-
-		int getaddrinfo_err = getaddrinfo(hostname.GetText(), mServent.GetText(), &addrinfo_hint, &addr_info);
-		if ( getaddrinfo_err == 0 ) {
-
-			if ( mVerboseLevel > eNoVerbosity ) {
-
-				for ( struct addrinfo *p = addr_info; p != nullptr; p = p->ai_next ) {
-					sockaddr_in *addr = (sockaddr_in*)(p->ai_addr);
-					char addr_txt[100];
-					inet_ntop(p->ai_family, &addr, addr_txt, p->ai_addrlen);
-					// std::cerr << "Family: " << p->ai_family << " name: \"" << hostname << "\" address: " << addr_txt << std::endl;
-					std::cerr << "Family: " << p->ai_family << " name: \"" << hostname << std::endl;
-				}
-			}
-
-			host_addrs.push_back(AddressInfo(addr_info, hostname));
-			freeaddrinfo(addr_info);
-
-		} else {
-			std::cerr << "Failure: getaddrinfo(" << hostnames[0] << ", " << mServent << "): " << gai_strerror(getaddrinfo_err);
-		}
+//--- Report elected configuration
+	std::cout <<
+			"Configuration:"      << std::endl <<
+			"\tVerbosity="        << (mVerboseLevel == eNoVerbosity? "none": (mVerboseLevel == eMinimalVerbosity? "min": "max")) << std::endl <<
+			"\tHTTP Server port=" << mServerPort << std::endl <<
+			"\tPing port="        << mServent << std::endl <<
+			"\tSocket family="    << mSocketFamilyNames[mFamily] << std::endl <<
+			"\tSocket type="      << mSocketTypeNames[mSocketType] << std::endl <<
+			"\tRun time="         << mRuntime << std::endl <<
+			"\tPing interval="    << mInterval << "ms\n" <<
+			"\tUDP peers="        << (mUDP_Client? "yes": "no") << std::endl;
+	for ( String hostname : mHostnames ) {
+		std::cout << hostname << " ";
 	}
-	return host_addrs;
+	std::cout << std::endl;
 }
 
 /**********************************************************************************************
@@ -560,34 +600,49 @@ std::vector<AddressInfo> CollectHosts(std::vector<String> hostnames, int inet_fa
  * @param char *args[] - null-terminated param list.
  */
 int main(int cnt, char *args[]) {
+	pthread_attr_setdetachstate(&mThreadAttributes, PTHREAD_CREATE_DETACHED);
+
 //--- interpret command line args
-	ProcessCommandLineArgs(args);
+	ProcessCommandLine(args);
 
 //--- Start HTTP server
-	pthread_t tid;
-	pthread_create(&tid, nullptr, ReportDispatchServer, nullptr);
-	pthread_detach(tid);
+	pthread_create(&tid, &mThreadAttributes, ReportDispatchServer, nullptr);
 
 //--- Collect hosts' addresses
-	std::vector<AddressInfo> host_addrs = CollectHosts(mHostnames, mFamily, mSocketType);
+	static std::vector<AddressInfo> host_addrs = SocketStreamChannel::CollectHosts(mHostnames, mFamily, mSocketType);
 
 //TODO: insert UDP datagram here.
 //--- Run pings
 	if ( host_addrs.size() > 0 ) {
 
-		do {
-			if ( mVerboseLevel > eNoVerbosity ) { std::cerr << "Connecting to... " << std::endl; }
-			for ( AddressInfo host : host_addrs ) {
-				PingService(&host);
-			}
-			usleep(mInterval * 1000);
-		} while ( mInterval > 0 );
+	//--- For all hosts...
+		for ( AddressInfo host_addr : host_addrs ) {
 
-		std::cerr.flush();
+			pthread_create(&tid, &mThreadAttributes,
+				[](void *arg) -> void* {
+					AddressInfo *host = reinterpret_cast<AddressInfo*>(arg);
+
+					VERBOSE(eNoVerbosity, { std::cout << "!!!Ping host: " << host->canonname << std::endl; });
+
+					do {
+						VERBOSE(eNoVerbosity, { std::cout << "Connecting to... " << host->canonname << std::endl; });
+						PingService(host);
+						usleep(mInterval * 1000);
+					} while ( mInterval > 0 ); // <-- essentially, if mInterval == 0, loop once. Hokey, I know.
+
+					mRun = false;
+					delete host;
+					return nullptr;
+				},
+				new AddressInfo(host_addr));
+		}
 	}
 
-	sleep(mRuntime);
+	while ( mRuntime-- > 0  &&  mRun ) {
+		sleep(1);
+	}
 	mRun = false;
+	return 0;
 }
 
 /* Graveyard
@@ -645,12 +700,12 @@ void RawSocket(struct addrinfo *host) {
 }
 */
 
-const char *SocketTypeNames[] = {
+const char *mSocketTypeNames[SOCK_PACKET+1] = {
 	"(null)", "Stream", "Datagram", "Raw", "Sequenced, reliable, connection-based, datagrams",
 	"Sequenced, reliable, connection-based, datagrams", "Datagram Congestion Control", "(null)",
 	"(null)", "(null)", "Packet"
 };
-const char *SocketFamilies[] = {
+const char *mSocketFamilyNames[PF_MAX] = {
 	"Unspecified (0)", "Unix pipe (1)", "IPv4 (2)", "AX25 (3)", "IPX (4)", "Appletalk (5)", "NetRom (6)",
 	"Bridge (7)", "ATMPVC (8)", "X25 (9)", "IPv6", "ROSE (11)", "DECnet (12)", "NETBEUI (13)", "Security (14)",
 	"Key (15)", "Netlink (16)", "Packet (17)", "ASH (18)", "ECONET (19)", "ATMSVC (20)", "RDS (21)", "SNA (22)",
@@ -664,7 +719,8 @@ const char *mClientHtmlPage =
 	"<head>\n"
 	"    <meta charset=\"UTF-8\">\n"
 	"    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n"
-	"    <title>WebSocket Message Collector</title>\n"
+	"	 <meta http-equiv=\"refresh\" content=\"2\">"
+	"    <title>ActionTarget WebSocket Message Collector</title>\n"
 	"    <style>\n"
 	"        body { font-family: Arial, sans-serif; margin: 20px; }\n"
 	"        #messages { border: 1px solid #ccc; padding: 10px; min-height: 200px; overflow-y: scroll; margin-bottom: 10px; }\n"

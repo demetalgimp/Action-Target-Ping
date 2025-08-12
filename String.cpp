@@ -1,3 +1,11 @@
+/**
+ * String.cpp
+ *
+ *  Created on: Aug 11, 2025
+ *      Author: swalton
+ *
+ * Copyright (c) 2025, IAS Publishing, LLC
+ */
 #include <string.h>
 #include "String.hpp"
 

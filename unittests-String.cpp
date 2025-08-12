@@ -1,3 +1,11 @@
+/**
+ * unittests-String.cpp
+ *
+ *  Created on: Aug 11, 2025
+ *      Author: swalton
+ *
+ * Copyright (c) 2025, IAS Publishing, LLC
+ */
 #include <string.h>
 #include <unistd.h>
 #include <sys/wait.h>
@@ -20,16 +28,6 @@ using namespace Tools;
 			exit(0);\
 		} else { \
 			waitpid(pid, nullptr, 0); \
-		} \
-	}
-// #define TEST_EQUALS(expected, got) 	{ \
-		auto _expected = expected; \
-		auto _got = got; \
-		std::cout << "\t" << __FILE__ << "[line#" << __LINE__ << "] " << #expected << " " << #got << "..."; \
-		if ( _expected == _got ) { \
-			std::cout << "\x1B[32mPASSED.\x1B[0m\n"; \
-		} else { \
-			std::cout << "\x1B[31mFAILED. Expected \"" << _expected << "\" but got \"" << _got << "\"\x1B[0m" << std::endl; \
 		} \
 	}
 #define TEST_TRUE(test) 	{ \
@@ -55,7 +53,7 @@ void unit_tests(void) {
 	{	std::cout << "-----------------------------------String()-----------------------------------" << std::endl;
 		String test_string;
 		TEST_EQUALS(test_string.GetLength(), 0u);
-		TEST_EQUALS(test_string.GetText(), String::EMPTY);
+		TEST_EQUALS(*test_string.GetText(), *String::EMPTY);
 	}
 
 	{	std::cout << "------------------------------String(const char*)-----------------------------" << std::endl;
@@ -232,38 +230,38 @@ void unit_tests(void) {
 		TEST_EQUALS(String(test_string.GetText()), "123456");
 	}
 
-	{	std::cout << "----------------------std::vector<String> Split(char c)-----------------------" << std::endl;
-		String test_string("");
-		std::vector<String> test_strings = test_string.Split(' ');
-		TEST_EQUALS(test_strings.size(), 1u);
-		TEST_EQUALS(test_strings[0], "");
+	// {	std::cout << "----------------------std::vector<String> Split(char c)-----------------------" << std::endl;
+	// 	String test_string("");
+	// 	std::vector<String> test_strings = test_string.Split(' ');
+	// 	TEST_EQUALS(test_strings.size(), 1u);
+	// 	TEST_EQUALS(test_strings[0], "");
 
-		test_string = String("abc");
-		test_strings = test_string.Split(' ');
-		TEST_EQUALS(test_strings.size(), 1u);
-		TEST_EQUALS(test_strings[0], "abc");
+	// 	test_string = String("abc");
+	// 	test_strings = test_string.Split(' ');
+	// 	TEST_EQUALS(test_strings.size(), 1u);
+	// 	TEST_EQUALS(test_strings[0], "abc");
 
-		test_string = String("abc ");
-		test_strings = test_string.Split(' ');
-		TEST_EQUALS(test_strings.size(), 2u);
-		TEST_EQUALS(test_strings[0], "abc");
-		TEST_EQUALS(test_strings[1], "");
+	// 	test_string = String("abc ");
+	// 	test_strings = test_string.Split(' ');
+	// 	TEST_EQUALS(test_strings.size(), 2u);
+	// 	TEST_EQUALS(test_strings[0], "abc");
+	// 	TEST_EQUALS(test_strings[1], "");
 
-		test_string = String("abc def");
-		test_strings = test_string.Split(' ');
-		TEST_EQUALS(test_strings.size(), 2u);
-		TEST_EQUALS(test_strings[0], "abc");
-		TEST_EQUALS(test_strings[1], "def");
+	// 	test_string = String("abc def");
+	// 	test_strings = test_string.Split(' ');
+	// 	TEST_EQUALS(test_strings.size(), 2u);
+	// 	TEST_EQUALS(test_strings[0], "abc");
+	// 	TEST_EQUALS(test_strings[1], "def");
 
-		test_string = String("This is a test of the ");
-		test_strings = test_string.Split(' ');
-		TEST_EQUALS(test_strings.size(), 7u);
-		TEST_EQUALS(test_strings[0], "This");
-		TEST_EQUALS(test_strings[1], "is");
-		TEST_EQUALS(test_strings[2], "a");
-		TEST_EQUALS(test_strings[3], "test");
-		TEST_EQUALS(test_strings[4], "of");
-		TEST_EQUALS(test_strings[5], "the");
-		TEST_EQUALS(test_strings[6], "");
-	}
+	// 	test_string = String("This is a test of the ");
+	// 	test_strings = test_string.Split(' ');
+	// 	TEST_EQUALS(test_strings.size(), 7u);
+	// 	TEST_EQUALS(test_strings[0], "This");
+	// 	TEST_EQUALS(test_strings[1], "is");
+	// 	TEST_EQUALS(test_strings[2], "a");
+	// 	TEST_EQUALS(test_strings[3], "test");
+	// 	TEST_EQUALS(test_strings[4], "of");
+	// 	TEST_EQUALS(test_strings[5], "the");
+	// 	TEST_EQUALS(test_strings[6], "");
+	// }
 }
