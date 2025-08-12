@@ -50,7 +50,7 @@ There are conflicting requirements. Unless this task was to use UDP, tracking la
 * verbosity - the user can get a look at the underpinnings of the program.
 * ports - named or numbered.
 * interval - the ping frequency with 1ms being the smallest. Zero means once.
-* unit tests - a modicum set of unit tests.
+* unit tests - a modicum set of unit tests run in "fork() jail."
 * runtime - number of seconds the program is to run.
 * host list - any number of hosts to test.
 * systemd - can be installed as a systemd service.
