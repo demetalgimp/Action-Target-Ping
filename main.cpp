@@ -25,7 +25,7 @@
 #include <vector>
 
 #define MAX_PEGBOARD 100
-#define VERBOSE(tier, cmd) if (mVerboseLevel > tier) {cmd};
+#define VERBOSE(tier, cmd) if (mVerboseLevel >= tier) {cmd};
 
 #include "String.hpp"
 using namespace Tools;
@@ -46,16 +46,16 @@ pthread_attr_t mThreadAttributes;
 /**********************************************************************************************
  * Global variables for program state.
  */
-VerboseLevel mVerboseLevel = eNoVerbosity;
-uint16_t mServerPort = 8080;
-String mServent = "80";
-int mFamily = AF_UNSPEC;
-int mSocketType = SOCK_STREAM;
-int mRuntime = 10; //seconds
-uint16_t mInterval = 0; // milliseconds
+VerboseLevel mVerboseLevel 		= eNoVerbosity;
+uint16_t mServerPort 			= 8080;
+String mServent 				= "80";
+int mFamily 					= AF_UNSPEC;
+int mSocketType 				= SOCK_STREAM;
+int mRuntime 					= 10; //seconds
+uint16_t mInterval 				= 0; // milliseconds
 pthread_mutex_t mReportLog_mutex = PTHREAD_RECURSIVE_MUTEX_INITIALIZER_NP;
-bool mRun = true;
-bool mUDP_Client = true;
+bool mRun 						= true;
+bool mUDP_Client 				= true;
 std::vector<String> mHostnames;
 std::vector<String> mReportLog;
 
@@ -197,13 +197,12 @@ std::vector<String> mReportLog;
 					int getaddrinfo_err = getaddrinfo(hostname.GetText(), mServent.GetText(), &addrinfo_hint, &addr_info);
 					if ( getaddrinfo_err == 0 ) {
 
-						VERBOSE(eNoVerbosity, {
+						VERBOSE(eMinimalVerbosity, {
 							for ( struct addrinfo *p = addr_info; p != nullptr; p = p->ai_next ) {
 								// sockaddr_in *addr = (sockaddr_in*)(p->ai_addr);
 								char addr_txt[100];
 								inet_ntop(p->ai_family, p->ai_addr, addr_txt, p->ai_addrlen);
-								std::cout << "Family: " << p->ai_family << " name: \"" << hostname << "\" address: " << addr_txt << std::endl;
-								std::cout << "Family: " << p->ai_family << " name: \"" << hostname << std::endl;
+std::cout << "Family: " << p->ai_family << " name: \"" << hostname << "\" address: " << addr_txt << std::endl;
 							}
 						});
 
@@ -211,7 +210,7 @@ std::vector<String> mReportLog;
 						freeaddrinfo(addr_info);
 
 					} else {
-						std::cout << "Failure: getaddrinfo(" << hostnames[0] << ", " << mServent << "): " << gai_strerror(getaddrinfo_err);
+						std::cerr << "Failure: getaddrinfo(" << hostnames[0] << ", " << mServent << "): " << gai_strerror(getaddrinfo_err);
 					}
 				}
 				return host_addrs;
@@ -329,7 +328,7 @@ std::vector<String> mReportLog;
 					} while (true);
 
 				} else {
-					std::cout << "!!!" << __FUNCTION__ << "[Line# " << __LINE__ << "]: Failed to create a datagram socket!" << std::endl;
+					std::cerr << "!!!" << __FUNCTION__ << "[Line# " << __LINE__ << "]: Failed to create a datagram socket!" << std::endl;
 					abort();
 				}
 
@@ -365,7 +364,7 @@ std::vector<String> mReportLog;
 		uint report_size = http_reply.GetLength() + 5;
 		tmps = reinterpret_cast<char*>(alloca(report_size));
 		snprintf(tmps, report_size, http_reply.GetText(), report_size);
-		VERBOSE(eMinimalVerbosity, { std::cout << "Reply: " << tmps; });
+		VERBOSE(eMaximalVerbosity, { std::cout << "Reply: " << tmps; });
 		return tmps;
 	}
 
@@ -378,9 +377,12 @@ std::vector<String> mReportLog;
 	void *ReportServlet(void *arg) {
 		SocketStreamChannel *channel = reinterpret_cast<SocketStreamChannel*>(arg);
 		String request = channel->Receive();
-		VERBOSE(eMinimalVerbosity, { std::cout << "Request: " << request; });
+		VERBOSE(eMaximalVerbosity, { std::cout << "Request: " << request; });
 
+		pthread_mutex_lock(&mReportLog_mutex);
 		channel->Send(GenerateHttpReport(mReportLog));
+		pthread_mutex_unlock(&mReportLog_mutex);
+
 		sleep(1); // <-- needed to get the data out to the client; else, the stream will be dumped.
 		delete channel;
 		return arg;
@@ -411,7 +413,7 @@ std::vector<String> mReportLog;
 
 						while (mRun) {
 							int client_sd = accept(server_sd, reinterpret_cast<struct sockaddr*>(&addr), &client_addr_size);
-							VERBOSE(eNoVerbosity, { std::cout << "Client connection: " << std::endl; });
+							VERBOSE(eMinimalVerbosity, { std::cout << "Client connection: " << std::endl; });
 							pthread_create(&tid, &mThreadAttributes, ReportServlet, new SocketStreamChannel(client_sd));
 						}
 
@@ -447,7 +449,8 @@ std::vector<String> mReportLog;
  */
 #define RETRIES 20
 	void *PingService(AddressInfo *host) {
-		VERBOSE(eMinimalVerbosity, 	{ std::cout
+
+		VERBOSE(eMaximalVerbosity, 	{ std::cout
 										<< "Open socket (family=" << host->family
 										<< " socket-type=" << host->socktype << ")"
 										<< std::endl;
@@ -456,7 +459,7 @@ std::vector<String> mReportLog;
 	//--- Create TCP/IP socket
 		int sd = socket(host->family, host->socktype, 0);
 		if ( sd > 0 ) {
-			VERBOSE(eNoVerbosity, { std::cout << host; });
+			VERBOSE(eMinimalVerbosity, { std::cout << host; });
 
 		//--- Attempt connection
 			std::cout << "Connecting to " << host->canonname << "... ";
@@ -467,7 +470,7 @@ std::vector<String> mReportLog;
 				if ( connect(sd, host->addr, host->address_len) == 0 ) {
 
 				//--- Attempt to send() a few bytes... if error, then true connection failed.
-					std::cout << "verify " << host->canonname << "'s connection with simple send()";
+					VERBOSE(eMinimalVerbosity, { std::cout << "verify " << host->canonname << "'s connection with simple send()"; } );
 					if ( send(sd, "test", 4, 0) < 0 ) {
 						perror("send()");
 
@@ -483,6 +486,7 @@ std::vector<String> mReportLog;
 		//--- Report string
 			String log_entry = "\t" + host->canonname + (retries <= 0? " failure!": " success! (" + String(RETRIES - retries) + "us)");
 			std::cout << log_entry << std::endl;
+
 			pthread_mutex_lock(&mReportLog_mutex);
 			mReportLog.push_back(log_entry);
 			pthread_mutex_unlock(&mReportLog_mutex);
@@ -620,9 +624,9 @@ std::vector<String> mReportLog;
 				pthread_create(&tid, &mThreadAttributes,
 					[](void *arg) -> void* {
 						AddressInfo *host = reinterpret_cast<AddressInfo*>(arg);
-						VERBOSE(eNoVerbosity, { std::cout << "!!!Ping host: " << host->canonname << std::endl; });
+						VERBOSE(eMinimalVerbosity, { std::cout << "!!!Ping host: " << host->canonname << std::endl; });
 						do {
-							VERBOSE(eNoVerbosity, { std::cout << "Connecting to... " << host->canonname << std::endl; });
+							VERBOSE(eMinimalVerbosity, { std::cout << "Connecting to... " << host->canonname << std::endl; });
 							PingService(host);
 							usleep(mInterval * 1000);
 						} while ( mInterval > 0 ); // <-- essentially, if mInterval == 0, loop once. Hokey, I know.
@@ -711,6 +715,79 @@ const char *mSocketFamilyNames[PF_MAX] = {
 	"Bluetooth (31)", "IUCV (32)", "RXRPC (33)", "ISDN (34)", "PHONET (35)", "IEEE802154 (36)", "CAIF (37)",
 	"ALG (38)", "NFC (39)", "VSOCK (40)", "KCM (41)", "QIPCRTR (42)", "SMC (43)", "XDP (44)", "MCTP (45)"
 };
+
+/** const char *mPipeServer -- Node.js translation service
+ *
+ *	PURPOSE: To be a go between from JS client to C++ server. Writing a WebSocket in C++ is unnecessary
+ *		because there appear to be libraries for that purpose; as always, private libraries are often
+ *		very difficult to adopt because they are rarely written for general consumption, rather, they
+ *		reflect the mind who wrote them.
+
+ *		This is a better approach. I am using the most powerful -- but, perhaps, least maintainable --
+ *		foundation of C++ while incorporating JavaScript, a language that specializes in web services.
+ *
+ * 	AUTHOR: Google-AI generated.
+ */
+const char *mPipeServer =
+	"	const int TO_SERVER = 5000;\n"
+	"	const int TO_CLIENT = 8080;\n"
+	"	const WebSocket = require('ws');\n"
+	"	const net = require('net');\n"
+	"\n"
+	"//--- WebSocket server on port TO_SERVER\n"
+	"	const wss = new WebSocket.Server({ port: TO_CLIENT });\n"
+	"\n"
+	"	wss.on('connection', ws => {\n"
+	"		console.log('WebSocket client connected on port ' + TO_CLIENT);\n"
+	"\n"
+	"	//--- TCP client to connect to the streaming port TO_SERVER\n"
+	"		const streamClient = new net.Socket();\n"
+	"\n"
+	"		streamClient.connect(TO_SERVER, 'localhost', () => {\n"
+	"			console.log('Connected to streaming server on port ' + TO_SERVER);\n"
+	"		});\n"
+	"\n"
+	"	//--- Send the received stream data to the WebSocket client\n"
+	"		streamClient.on('data', data => {\n"
+	"			if (ws.readyState === WebSocket.OPEN) {\n"
+	"				ws.send(data);\n"
+	"			}\n"
+	"		});\n"
+	"\n"
+	"	//--- Close the WebSocket connection if the stream closes\n"
+	"		streamClient.on('close', () => {\n"
+	"			console.log('Disconnected from streaming server on port ' + TO_SERVER);\n"
+	"			ws.close();\n"
+	"		});\n"
+	"\n"
+	"	//--- Close the WebSocket connection on streaming error\n"
+	"		streamClient.on('error', err => {\n"
+	"			console.error('Streaming client error:', err);\n"
+	"			ws.close();\n"
+	"		});\n"
+	"\n"
+	"	//--- Destroy the streaming client if the WebSocket closes\n"
+	"		ws.on('close', () => {\n"
+	"			console.log('WebSocket client disconnected');\n"
+	"			streamClient.destroy();\n"
+	"		});\n"
+	"\n"
+	"	//--- Destroy the streaming client on WebSocket error\n"
+	"		ws.on('error', err => {\n"
+	"			console.error('WebSocket error:', err);\n"
+	"			streamClient.destroy();\n"
+	"		});\n"
+	"	});\n"
+	"\n"
+	"console.log('WebSocket server listening on ws://localhost:' + TO_CLIENT);\n";
+
+/** const char *mClientHtmlPage -- Client-side display of data
+ *
+ *	PURPOSE: To be an web-side interface. This connects with the pass-through pipe to the C++
+ *		ping program.
+ *
+ *	AUTHOR: Google-AI generated.
+ */
 const char *mClientHtmlPage =
 	"<!DOCTYPE html>\n"
 	"<html lang=\"en\">\n"
@@ -732,65 +809,66 @@ const char *mClientHtmlPage =
 	"    <button id=\"sendButton\">Send</button>\n"
 	"\n"
 	"    <script>\n"
-	"        const messagesDiv = document.getElementById('messages');\n"
-	"        const messageInput = document.getElementById('messageInput');\n"
-	"        const sendButton = document.getElementById('sendButton');\n"
+	"		const int TO_CLIENT = 8080;\n"
+	"		const messagesDiv = document.getElementById('messages');\n"
+	"		const messageInput = document.getElementById('messageInput');\n"
+	"		const sendButton = document.getElementById('sendButton');\n"
 	"\n"
-	"        // Establish WebSocket connection\n"
-	"        const socket = new WebSocket('ws://localhost:8080'); // Replace with your server address\n"
+	"	//--- Establish WebSocket connection\n"
+	"		const socket = new WebSocket('ws://localhost:' + TO_SERVER); // Replace with your server address\n"
 	"\n"
-	"        // Event listener for when the connection is opened\n"
-	"        socket.onopen = (event) => {\n"
-	"            console.log('WebSocket connection opened:', event);\n"
-	"            addMessage('System: Connected to WebSocket server.');\n"
-	"        };\n"
+	"	//--- Event listener for when the connection is opened\n"
+	"		socket.onopen = (event) => {\n"
+	"			console.log('WebSocket connection opened:', event);\n"
+	"			addMessage('System: Connected to WebSocket server.');\n"
+	"		};\n"
 	"\n"
-	"        // Event listener for incoming messages\n"
-	"        socket.onmessage = (event) => {\n"
-	"            console.log('Message received:', event.data);\n"
-	"            addMessage(`Server: ${event.data}`);\n"
-	"        };\n"
+	"	//--- Event listener for incoming messages\n"
+	"		socket.onmessage = (event) => {\n"
+	"			console.log('Message received:', event.data);\n"
+	"			addMessage(`Server: ${event.data}`);\n"
+	"		};\n"
 	"\n"
-	"        // Event listener for connection errors\n"
-	"        socket.onerror = (error) => {\n"
-	"            console.error('WebSocket error:', error);\n"
-	"            addMessage('System: WebSocket error occurred.');\n"
-	"        };\n"
+	"	//--- Event listener for connection errors\n"
+	"		socket.onerror = (error) => {\n"
+	"			console.error('WebSocket error:', error);\n"
+	"			addMessage('System: WebSocket error occurred.');\n"
+	"		};\n"
 	"\n"
-	"        // Event listener for when the connection is closed\n"
-	"        socket.onclose = (event) => {\n"
-	"            console.log('WebSocket connection closed:', event);\n"
-	"            addMessage('System: Disconnected from WebSocket server.');\n"
-	"        };\n"
+	"	//--- Event listener for when the connection is closed\n"
+	"		socket.onclose = (event) => {\n"
+	"			console.log('WebSocket connection closed:', event);\n"
+	"			addMessage('System: Disconnected from WebSocket server.');\n"
+	"		};\n"
 	"\n"
-	"        // Function to add messages to the display\n"
-	"        function addMessage(text) {\n"
-	"            const messageElement = document.createElement('div');\n"
-	"            messageElement.classList.add('message');\n"
-	"            messageElement.textContent = text;\n"
-	"            messagesDiv.appendChild(messageElement);\n"
-	"            messagesDiv.scrollTop = messagesDiv.scrollHeight; // Auto-scroll to bottom\n"
-	"        }\n"
+	"	//--- Function to add messages to the display\n"
+	"		function addMessage(text) {\n"
+	"			const messageElement = document.createElement('div');\n"
+	"			messageElement.classList.add('message');\n"
+	"			messageElement.textContent = text;\n"
+	"			messagesDiv.appendChild(messageElement);\n"
+	"			messagesDiv.scrollTop = messagesDiv.scrollHeight; // Auto-scroll to bottom\n"
+	"		}\n"
 	"\n"
-	"        // Event listener for sending messages\n"
-	"        sendButton.addEventListener('click', () => {\n"
-	"            sendMessage();\n"
-	"        });\n"
+	"	//--- Event listener for sending messages\n"
+	"		sendButton.addEventListener('click', () => {\n"
+	"			sendMessage();\n"
+	"		});\n"
 	"\n"
-	"        messageInput.addEventListener('keypress', (event) => {\n"
-	"            if (event.key === 'Enter') {\n"
-	"                sendMessage();\n"
-	"            }\n"
-	"        });\n"
+	"		messageInput.addEventListener('keypress', (event) => {\n"
+	"			if (event.key === 'Enter') {\n"
+	"				sendMessage();\n"
+	"			}\n"
+	"		});\n"
 	"\n"
-	"        function sendMessage() {\n"
-	"            const message = messageInput.value;\n"
-	"            if (message.trim() !== '') {\n"
-	"                socket.send(message);\n"
-	"                addMessage(`You: ${message}`);\n"
-	"                messageInput.value = ''; // Clear input field\n"
-	"            }\n"
-	"        }\n"
-	"    </script>\n";
+	"		function sendMessage() {\n"
+	"			const message = messageInput.value;\n"
+	"			if (message.trim() !== '') {\n"
+	"				socket.send(message);\n"
+	"				addMessage(`You: ${message}`);\n"
+	"				messageInput.value = ''; // Clear input field\n"
+	"			}\n"
+	"		}\n"
+	"	</script>\n";
 	// "</body>\n"
 	// "</html>\n";
