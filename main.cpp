@@ -71,9 +71,12 @@ std::vector<String> mReportLog;
 		int protocol;
 		socklen_t address_len;
 		union {
-			struct sockaddr* addr;
-			struct sockaddr_in* addr_in4;
-			struct sockaddr_in6* addr_in6;
+			// struct sockaddr* addr;
+			// struct sockaddr_in* addr_in4;
+			// struct sockaddr_in6* addr_in6;
+			struct sockaddr addr;
+			struct sockaddr_in addr_in4;
+			struct sockaddr_in6 addr_in6;
 		};
 		String canonname;
 		String address;
@@ -86,21 +89,21 @@ std::vector<String> mReportLog;
 			void *ai_addr = info->ai_addr;
 			address = inet_ntop(family, ai_addr, tmps, info->ai_addrlen);
 
-			if ( family == AF_INET ) {
-				addr_in4 = reinterpret_cast<struct sockaddr_in*>(memcpy(new sockaddr_in(), info->ai_addr, address_len));
+			if ( family == AF_INET6 ) {
+				addr_in6 = *reinterpret_cast<struct sockaddr_in6*>(info->ai_addr);// reinterpret_cast<struct sockaddr_in*>(memcpy(new sockaddr_in(), info->ai_addr, address_len));
 
-			} else if ( family == AF_INET6 ) {
-				addr_in6 = reinterpret_cast<struct sockaddr_in6*>(memcpy(new sockaddr_in6(), info->ai_addr, address_len));
+			} else if ( family == AF_INET ) {
+				addr_in4 = *reinterpret_cast<struct sockaddr_in*>(info->ai_addr);//reinterpret_cast<struct sockaddr_in6*>(memcpy(new sockaddr_in6(), info->ai_addr, address_len));
 
 			} else {
-				addr = reinterpret_cast<struct sockaddr*>(memcpy(new sockaddr(), info->ai_addr, address_len));
+				addr = *(info->ai_addr);// reinterpret_cast<struct sockaddr*>(memcpy(new sockaddr(), info->ai_addr, address_len));
 			}
 		}
 		virtual ~AddressInfo(void) {
-			if ( addr != nullptr ) {
-				// delete addr;
-				addr = nullptr;
-			}
+			// if ( addr != nullptr ) {
+			// 	// delete addr;
+			// 	addr = nullptr;
+			// }
 		}
 		friend std::ostream& operator<<(std::ostream& stream, const AddressInfo& addrinfo) {
 			return (stream 	<< "\tName=" << addrinfo.canonname << " "
@@ -401,6 +404,7 @@ std::cout << "Family: " << p->ai_family << " name: \"" << hostname << "\" addres
 		int server_sd;
 		if ( (server_sd = socket(AF_INET, SOCK_STREAM, 0)) > 0 ) {
 
+
 			socklen_t value = 1;
 			if ( setsockopt(server_sd, SOL_SOCKET, SO_REUSEPORT, &value, sizeof(value)) == 0 ) {   // <-- Ensure that the port is "unlocked."
 
@@ -411,27 +415,20 @@ std::cout << "Family: " << p->ai_family << " name: \"" << hostname << "\" addres
 					if ( listen(server_sd, 5) == 0 ) {
 						socklen_t client_addr_size;
 
-						while (mRun) {
+						while ( mRun ) {
 							int client_sd = accept(server_sd, reinterpret_cast<struct sockaddr*>(&addr), &client_addr_size);
 							VERBOSE(eMinimalVerbosity, { std::cout << "Client connection: " << std::endl; });
 							pthread_create(&tid, &mThreadAttributes, ReportServlet, new SocketStreamChannel(client_sd));
 						}
 
-					} else {
-						perror("listen()");
-					}
+					} else { perror("listen()"); }
 
-				} else {
-					perror("bind()");
-				}
+				} else { perror("bind()"); }
 
-			} else {
-				perror("setsockopt()");
-			}
+			} else { perror("setsockopt()"); }
 
-		} else {
-			perror("socket()");
-		}
+		} else { perror("socket()"); }
+
 		return nullptr;
 	}
 
@@ -450,11 +447,7 @@ std::cout << "Family: " << p->ai_family << " name: \"" << hostname << "\" addres
 #define RETRIES 20
 	void *PingService(AddressInfo *host) {
 
-		VERBOSE(eMaximalVerbosity, 	{ std::cout
-										<< "Open socket (family=" << host->family
-										<< " socket-type=" << host->socktype << ")"
-										<< std::endl;
-									});
+		VERBOSE(eMaximalVerbosity, 	{ std::cout << "Open socket (family=" << host->family << " socket-type=" << host->socktype << ")" << std::endl; });
 
 	//--- Create TCP/IP socket
 		int sd = socket(host->family, host->socktype, 0);
@@ -467,7 +460,7 @@ std::cout << "Family: " << p->ai_family << " name: \"" << hostname << "\" addres
 			while ( --retries >= 0 ) {
 
 			//--- Attempt to connect
-				if ( connect(sd, host->addr, host->address_len) == 0 ) {
+				if ( connect(sd, &(host->addr), host->address_len) == 0 ) {
 
 				//--- Attempt to send() a few bytes... if error, then true connection failed.
 					VERBOSE(eMinimalVerbosity, { std::cout << "verify " << host->canonname << "'s connection with simple send()"; } );
